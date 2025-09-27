@@ -1,13 +1,14 @@
 import pygame
 import numpy as np
 
-WHITE  = (255, 255, 255)
-BLACK  = (0,   0,   0)
-GREEN  = (0, 255,   0)
-RED    = (255,  0,   0)
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+GREEN = (0, 255, 0)
+RED = (255, 0, 0)
 PURPLE = (102, 0, 204)
-BLUE   = (102, 178, 255)
+BLUE = (102, 178, 255)
 ORANGE = (255, 128, 0)
+
 
 # Function to Render a the Grid with all associated items
 def render_grid(grid, screen, cell_size):
@@ -16,7 +17,7 @@ def render_grid(grid, screen, cell_size):
     screen.fill(WHITE)
 
     # Define some constants
-    margin = 2                          
+    margin = 2
     tri_margin = 2
     circle_radius = cell_size // 2 - margin
 
@@ -46,12 +47,12 @@ def render_grid(grid, screen, cell_size):
                 cy = y + cell_size // 2
                 half = cell_size // 2 - tri_margin
                 points = [
-                    (cx, cy - half),   
-                    (cx - half, cy + half),   
+                    (cx, cy - half),
+                    (cx - half, cy + half),
                     (cx + half, cy + half),
                 ]
                 pygame.draw.polygon(screen, RED, points)
-                
+
             elif v == 4:
                 # Goal: Solid Green Square
                 pygame.draw.rect(screen, GREEN, (x, y, cell_size, cell_size))
@@ -65,8 +66,8 @@ def render_grid(grid, screen, cell_size):
                 cy = y + cell_size // 2
                 half = cell_size // 2 - tri_margin
                 points = [
-                    (cx, cy - half),   
-                    (cx - half, cy + half),   
+                    (cx, cy - half),
+                    (cx - half, cy + half),
                     (cx + half, cy + half),
                 ]
                 pygame.draw.polygon(screen, ORANGE, points)

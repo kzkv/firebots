@@ -7,7 +7,8 @@
 from players import *
 from a_star import getDangerNeighbors, heuristic, euclidean
 
-# Program Defines Movement Functions for Enemies 
+# Program Defines Movement Functions for Enemies
+
 
 # Function to check next enemy step
 # Return:
@@ -21,14 +22,14 @@ def next_step_okay(grid, r, c, hero):
     value = grid[r, c]
     # Check if step is within grid bounds
     if r < 0 or r >= rows or c < 0 or c >= cols:
-        return 99 # Not Valid should never happen
+        return 99  # Not Valid should never happen
     if (r, c) == hero.pos():
-        return 2 # Captured Hero
+        return 2  # Captured Hero
     if (value == EMPTY) or (value == PATH) or (value == GOAL) or (value == ENEMY):
-        return 0 # All Good (Valid)
+        return 0  # All Good (Valid)
     if (value == TET) or (value == HUSK):
-        return 1 # Husk dat BOI
-    
+        return 1  # Husk dat BOI
+
 
 # Function to Choose Next Space for Enemy
 def next_step(grid, enemy, hero):
@@ -41,7 +42,7 @@ def next_step(grid, enemy, hero):
     next_cells = getDangerNeighbors(grid, enemy.pos())
 
     # Distance
-    dist = float('inf')
+    dist = float("inf")
 
     # Find Closest Cell to Hero
     for cell in next_cells:
@@ -65,7 +66,7 @@ def blindy_rage(grid, enemies, hero):
 
     # Loop through our enemies and determine where to move them
     for idx, baddie in enumerate(enemies):
-        
+
         # Get target for each enemy
         target = next_step(grid, baddie, hero)
 
@@ -79,13 +80,13 @@ def blindy_rage(grid, enemies, hero):
 
         # Check all the outcomes and determine what do
         if outcome == 1:
-            enemy_targets.append((idx, None, outcome)) # Husk
+            enemy_targets.append((idx, None, outcome))  # Husk
         elif outcome == 2:
-            enemy_targets.append((idx, target, outcome)) # Caught Hero
+            enemy_targets.append((idx, target, outcome))  # Caught Hero
             reserved.add(target)
             caught = True
         else:
-            enemy_targets.append((idx, target, outcome)) # Just Move
+            enemy_targets.append((idx, target, outcome))  # Just Move
             reserved.add(target)
 
     # Clear All Enemies From Map/Husk the ones that need Husking and move them
@@ -104,32 +105,3 @@ def blindy_rage(grid, enemies, hero):
         updated_enemies.append(baddie)
 
     return updated_enemies, caught
-
-
-
-    
-
-
-        
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

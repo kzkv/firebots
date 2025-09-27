@@ -12,16 +12,19 @@ from players import *
 
 # Utility Functions
 
+
 # Define Function for our Heuristic
 # Using Manhattan Distance
 def heuristic(start, goal):
-    manhattan_distance = abs(start[0] - goal[0]) + abs (start[1] - goal[1])
+    manhattan_distance = abs(start[0] - goal[0]) + abs(start[1] - goal[1])
     return manhattan_distance
+
 
 def euclidean(start, goal):
     dr = start[0] - goal[0]
     dc = start[1] - goal[1]
-    return (dr*dr + dc*dc) ** 0.5
+    return (dr * dr + dc * dc) ** 0.5
+
 
 # Find All Neighbors
 def getNeighbors(grid, cell):
@@ -39,25 +42,42 @@ def getNeighbors(grid, cell):
     # Check for cell above (make sure its not out of bounds)
     if r > 0:
         # Check that cell is empty or goal
-        if (grid[r-1, c] == EMPTY) or (grid[r-1, c] == GOAL) or (grid[r-1, c] == PATH):
-            neighbors.append((r-1, c))
+        if (
+            (grid[r - 1, c] == EMPTY)
+            or (grid[r - 1, c] == GOAL)
+            or (grid[r - 1, c] == PATH)
+        ):
+            neighbors.append((r - 1, c))
     # Check for cell down
-    if r < rows-1:
+    if r < rows - 1:
         # Check that cell is empty or goal
-        if (grid[r+1, c] == EMPTY) or (grid[r+1, c] == GOAL) or (grid[r+1, c] == PATH):
-            neighbors.append((r+1, c))
+        if (
+            (grid[r + 1, c] == EMPTY)
+            or (grid[r + 1, c] == GOAL)
+            or (grid[r + 1, c] == PATH)
+        ):
+            neighbors.append((r + 1, c))
     # Check for cell left
     if c > 0:
         # Check that cell is empty or goal
-        if (grid[r, c-1] == EMPTY) or (grid[r, c-1] == GOAL) or (grid[r, c-1] == PATH):
-            neighbors.append((r, c-1))
+        if (
+            (grid[r, c - 1] == EMPTY)
+            or (grid[r, c - 1] == GOAL)
+            or (grid[r, c - 1] == PATH)
+        ):
+            neighbors.append((r, c - 1))
     # Check for cell right
-    if c < cols-1:
+    if c < cols - 1:
         # Check that cell is empty or goal
-        if (grid[r, c+1] == EMPTY) or (grid[r, c+1] == GOAL) or (grid[r, c+1] == PATH):
-            neighbors.append((r, c+1))
+        if (
+            (grid[r, c + 1] == EMPTY)
+            or (grid[r, c + 1] == GOAL)
+            or (grid[r, c + 1] == PATH)
+        ):
+            neighbors.append((r, c + 1))
 
     return neighbors
+
 
 # Find Danger Neighbors
 def getDangerNeighbors(grid, cell):
@@ -74,18 +94,19 @@ def getDangerNeighbors(grid, cell):
 
     # Check for cell above
     if r > 0:
-        neighbors.append((r-1, c))
+        neighbors.append((r - 1, c))
     # Check for cell down
-    if r < rows-1:
-        neighbors.append((r+1, c))
+    if r < rows - 1:
+        neighbors.append((r + 1, c))
     # Check for cell left
     if c > 0:
-        neighbors.append((r, c-1))
+        neighbors.append((r, c - 1))
     # Check for cell right
-    if c < cols-1:
-        neighbors.append((r, c+1))
+    if c < cols - 1:
+        neighbors.append((r, c + 1))
 
     return neighbors
+
 
 # Function to get cells within a Manhattan radius around a center cell
 def getCellRadius(grid, start, radius):
@@ -116,6 +137,7 @@ def getCellRadius(grid, start, radius):
 
     return rings  # dict: {(r,c): distance}
 
+
 # We are going to build a danger grid that will create danger zones around enemies
 # we will run this at the start of the run to try to work around enemies
 # we will then check the distance to enemies at every time step
@@ -124,10 +146,10 @@ def getCellRadius(grid, start, radius):
 def buildDangerZones(grid, enemies):
     # Make grid the same size as occ grid
     r, c = grid.shape
-    dangerGrid = np.zeros((r,c), dtype=np.uint16)
+    dangerGrid = np.zeros((r, c), dtype=np.uint16)
     dangerRadius = 8
     maxDanger = 10
-    dangerDecay = maxDanger/float(dangerRadius)
+    dangerDecay = maxDanger / float(dangerRadius)
 
     # Loop through the enemies and build danger zones
     for baddie in enemies:
@@ -142,14 +164,12 @@ def buildDangerZones(grid, enemies):
             raw = maxDanger - dangerDecay * d
             score = int(round(raw)) if raw > 0 else 0
             if score > 0:
-                dangerGrid[rr, cc] += score    
+                dangerGrid[rr, cc] += score
 
     return dangerGrid
 
 
-
-
-# Function to return path 
+# Function to return path
 def buildPath(parents, goal):
     path = [goal]
     current = goal
@@ -159,13 +179,13 @@ def buildPath(parents, goal):
     path.reverse()
     return path
 
+
 # Function to overlay path onto grid
 def paintPath(path, grid):
     grid[grid == PATH] = EMPTY
-    for (r, c) in path[1:-1]:           
+    for r, c in path[1:-1]:
         if grid[r, c] == EMPTY:
             grid[r, c] = PATH
-
 
 
 # Function to Perform A* Search and Create a Path
@@ -175,7 +195,7 @@ def compute_A_star(grid, start, goal, dangerZones, dangerWeight):
     base_step_cost = 1
 
     start = tuple(start)
-    goal  = tuple(goal)
+    goal = tuple(goal)
 
     # Initalize our cost so far score (g score)
     g = {start: 0}
@@ -209,7 +229,7 @@ def compute_A_star(grid, start, goal, dangerZones, dangerWeight):
             # Update Danger Cost
             dr, dc = next
             danger_cost = int(dangerZones[dr, dc]) * dangerWeight
-            
+
             new_g_cost = g[current] + base_step_cost + danger_cost
 
             # If we havent seen the neighbor cell, or found a better route to it

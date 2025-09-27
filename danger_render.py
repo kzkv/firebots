@@ -3,6 +3,7 @@ import pygame
 # FUNCTION CREATED BY CHATGPT TO HELP ME VISUALIZE MY DANGER ZONES
 # https://chatgpt.com/s/t_68c79668ec40819189cda73f03ab6089
 
+
 # Render Danger Overlay
 #  - danger: 2D np.uint8 array (0..255) from buildDangerZones
 #  - screen: your Pygame display surface
@@ -23,9 +24,9 @@ def render_danger_overlay(danger, screen, cell_size, max_alpha=180):
     # Loop over every cell and draw a red rectangle with alpha proportional to danger
     for r in range(rows):
         for c in range(cols):
-            val = int(danger[r, c])               # 0..255 danger
+            val = int(danger[r, c])  # 0..255 danger
             if val == 0:
-                continue                          # skip empty cells for speed
+                continue  # skip empty cells for speed
             # Scale cell danger (0..maxv) -> alpha (0..max_alpha)
             alpha = int(max_alpha * (val / maxv))
             # Rectangle in screen coords for this cell

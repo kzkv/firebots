@@ -13,12 +13,13 @@ rng = np.random.default_rng()
 
 # Define cell constants
 EMPTY = 0
-TET   = 1
-HERO  = 2
+TET = 1
+HERO = 2
 ENEMY = 3
-GOAL  = 4
-PATH  = 5
-HUSK  = 6
+GOAL = 4
+PATH = 5
+HUSK = 6
+
 
 # Base Class for Grid Entities (Hero, Enemy, etc.)
 class Entity:
@@ -40,7 +41,7 @@ class Entity:
         # Rewrite to Grid in New Pos
         grid[self.r, self.c] = self.cell_value
 
-    # Husking Function 
+    # Husking Function
     def husk_self(self, grid):
         # Rewrite to Grid as Husk
         grid[self.r, self.c] = HUSK
@@ -52,7 +53,7 @@ class Entity:
         row = empty[0][idx]
         col = empty[1][idx]
         return row, col
-    
+
     # Func to Teleport
     def teleportHero(self, grid):
         empty = np.where(grid == 0)
@@ -74,4 +75,3 @@ class Enemy(Entity):
     def __init__(self, r, c):
         # Call base constructor with ENEMY cell value
         super().__init__(r, c, ENEMY)
-

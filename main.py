@@ -16,7 +16,6 @@ from enemy_movement import *
 from hero_movement_v2 import *
 from hud import HUD_H, draw_hud, count_husks
 
-
 # Initalize PyGame Session
 pygame.init()
 pygame.display.set_caption("Flatland 2: Electric Bugaloo")
@@ -28,12 +27,13 @@ rng = np.random.default_rng()
 grid_rows = 64
 grid_cols = 64
 cell_size = 18
-grid_w = grid_rows*cell_size
-grid_h = grid_cols*cell_size
+grid_w = grid_rows * cell_size
+grid_h = grid_cols * cell_size
 
 game_over = False
-outcome    = ""  # "You win!" or "You were caught!"
+outcome = ""  # "You win!" or "You were caught!"
 waiting_to_start = True
+
 
 def draw_game_over(screen, grid_w, grid_h, text):
     import pygame
@@ -46,8 +46,9 @@ def draw_game_over(screen, grid_w, grid_h, text):
     font_small = pygame.font.SysFont(None, 24)
     t1 = font_big.render(text, True, (255, 255, 255))
     t2 = font_small.render("Press ESC or close window to quit", True, (220, 220, 220))
-    screen.blit(t1, (grid_w//2 - t1.get_width()//2, grid_h//2 - t1.get_height()))
-    screen.blit(t2, (grid_w//2 - t2.get_width()//2, grid_h//2 + 8))
+    screen.blit(t1, (grid_w // 2 - t1.get_width() // 2, grid_h // 2 - t1.get_height()))
+    screen.blit(t2, (grid_w // 2 - t2.get_width() // 2, grid_h // 2 + 8))
+
 
 def draw_start_overlay(screen, grid_w, grid_h, text="Press SPACE to start"):
     overlay = pygame.Surface((grid_w, grid_h), pygame.SRCALPHA)
@@ -57,8 +58,9 @@ def draw_start_overlay(screen, grid_w, grid_h, text="Press SPACE to start"):
     font_small = pygame.font.SysFont(None, 24)
     t1 = font_big.render(text, True, (255, 255, 255))
     t2 = font_small.render("ESC or Q to quit", True, (220, 220, 220))
-    screen.blit(t1, (grid_w//2 - t1.get_width()//2, grid_h//2 - t1.get_height()))
-    screen.blit(t2, (grid_w//2 - t2.get_width()//2, grid_h//2 + 8))
+    screen.blit(t1, (grid_w // 2 - t1.get_width() // 2, grid_h // 2 - t1.get_height()))
+    screen.blit(t2, (grid_w // 2 - t2.get_width() // 2, grid_h // 2 + 8))
+
 
 # Create Screen
 screen = pygame.display.set_mode((grid_w, grid_h + HUD_H))
@@ -84,7 +86,6 @@ while running:
                 waiting_to_start = False
                 steps_taken = 0
 
-
     if firstRun:
         grid, hero_rc, goal, enemy_rcs = generateTetField(grid_rows, grid_cols, density=.2, seed=68443)
         hero = Hero(hero_rc[0], hero_rc[1])
@@ -103,14 +104,14 @@ while running:
         firstRun = False
 
     if not game_over:
-        
+
         dangerZone = buildDangerZones(grid, enemies)
 
         if waiting_to_start and not game_over:
             render_grid(grid, screen, cell_size)
             render_danger_overlay(dangerZone, screen, cell_size)
             enemies_count = len(enemies)
-            husks_count   = count_husks(grid)
+            husks_count = count_husks(grid)
             draw_hud(screen, grid_w, grid_h, steps_taken, enemies_count, husks_count, teleports)
             draw_start_overlay(screen, grid_w, grid_h)
             pygame.display.flip()
@@ -118,78 +119,44 @@ while running:
             continue  # wait here until SPACE
 
         weWon, path, safe_since, teleports = heroically_rage(
-            grid, hero, dangerZone, path, goal, teleports, safe_since, enemies )
+            grid, hero, dangerZone, path, goal, teleports, safe_since, enemies)
 
         if weWon:
             outcome = "You win!"
             game_over = True
         else:
-            
+
             enemies, caught = blindy_rage(grid, enemies, hero)
             if caught:
                 outcome = "You were caught!"
                 game_over = True
 
-        
         if path:
             paintPath(path, grid)
 
-        
         grid[goal[0], goal[1]] = GOAL
 
-        
         new_pos = hero.pos()
         if new_pos != last_hero_pos:
             steps_taken += 1
             last_hero_pos = new_pos
 
-        
         render_grid(grid, screen, cell_size)
         render_danger_overlay(dangerZone, screen, cell_size)
 
     else:
-        
+
         render_grid(grid, screen, cell_size)
-        
+
         render_danger_overlay(dangerZone, screen, cell_size)
-       
+
         draw_game_over(screen, grid_w, grid_h, outcome)
 
-    
     enemies_count = len(enemies)
     husks_count = count_husks(grid)
     draw_hud(screen, grid_w, grid_h, steps_taken, enemies_count, husks_count, teleports)
 
     pygame.display.flip()
-    clock.tick(4)  
+    clock.tick(4)
 
 pygame.quit()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

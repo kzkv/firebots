@@ -8,8 +8,9 @@ import pygame
 import numpy as np
 from players import HUSK
 
-# Height of the HUD bar 
+# Height of the HUD bar
 HUD_H = 48
+
 
 # Count husks on the grid
 def count_husks(grid):
@@ -18,7 +19,7 @@ def count_husks(grid):
 
 def draw_hud(screen, grid_w, grid_h, steps, enemies_count, husks_count, teleports):
     # Colors
-    DARK  = (30, 30, 30)
+    DARK = (30, 30, 30)
     LIGHT = (210, 210, 210)
     WHITE = (255, 255, 255)
 
