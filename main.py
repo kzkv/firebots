@@ -1,21 +1,31 @@
 # Michael Laks & Tom Kazakov
 # RBE 550, Firebots (course project)
-# AI usage: Chat GPT, Junie Pro
+# AI usage: ChatGPT, Junie Pro
 
 import pygame
 
-pygame.init()
-pygame.display.set_caption("Firebots")
+from render import World
 
 # 6x3' field, 72x36", scale is 1" -> 1'
-# Target width of a fire line is 3', 3 cells wide
-field_width = 72
-field_height = 36
+cols = 72
+rows = 36
+cell_size = 20
+hud_height = cell_size
 
-# Fire will be defined by a higher-resolution bitmap (10 pixels per cell)
-# Obstacle location will be randomly generated with a cell-based overlay
-# Typical trees: 1', 2', or 3' square trunks, 3' "cross", s-shaped 4x4' "large tree"
-# TODO: Boulders and relief will be added later and can be any shape
-# TODO: Consider brush or flammables affecting fire propagation
-# TODO: Consider different types of terrain with various movement cost
+pygame.init()
+world = World(rows, cols, cell_size)
 
+running = True
+
+
+while running:
+    for e in pygame.event.get():
+        if e.type == pygame.QUIT:
+            running = False
+
+    world.render_grid()
+
+    pygame.display.flip()
+    world.clock.tick(60)
+
+pygame.quit()
