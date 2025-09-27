@@ -1,16 +1,11 @@
-# Michael Laks
-# 9/14/2025
-# RBE 550
-
-# Flatland Assignment
+# Michael Laks & Tom Kazakov
+# RBE 550, Firebots (course project)
+# AI usage: Chat GPT, Junie Pro
 
 # This program contains functions and logic for motion planning with A*
 
-import numpy as np
-from queue import PriorityQueue
 from players import *
-
-# Utility Functions
+import networkx as nx
 
 
 # Define Function for our Heuristic
@@ -189,60 +184,76 @@ def paintPath(path, grid):
 
 
 # Function to Perform A* Search and Create a Path
+# Refactored to use NetworkX instead of custom A* using Junie Pro
 def compute_A_star(grid, start, goal, dangerZones, dangerWeight):
 
-    # Initalize a step cost
+    # Initialize a step cost
     base_step_cost = 1
 
-    start = tuple(start)
-    goal = tuple(goal)
+    start = (int(start[0]), int(start[1]))
+    goal = (int(goal[0]), int(goal[1]))
 
-    # Initalize our cost so far score (g score)
-    g = {start: 0}
+    # Build a directed graph where moving into a neighbor costs
+    # base_step_cost + dangerWeight * danger at the neighbor
+    rows, cols = grid.shape
+    G = nx.DiGraph()
 
-    # Initalize Parents list, which will track connections
-    #   parents[child] = parent_cell (cell that child was added from)
-    parents = {}
+    def is_walkable(rc):
+        r, c = rc
+        return grid[r, c] in (EMPTY, GOAL, PATH)
 
-    # Create Priority Queue for the frontier ordered by f = g + h
-    frontier_queue = PriorityQueue()
+    # Add edges from every cell to walkable neighbors. This allows starting
+    # from a HERO cell (not walkable) while only moving into walkable cells,
+    # matching the original getNeighbors behavior.
+    for r in range(rows):
+        for c in range(cols):
+            # Current cell can be any; neighbors must be walkable
+            cur = (r, c)
+            # Up
+            if r > 0:
+                nb = (r - 1, c)
+                if is_walkable(nb):
+                    cost = (
+                        base_step_cost + int(dangerZones[nb[0], nb[1]]) * dangerWeight
+                    )
+                    G.add_edge(cur, nb, weight=cost)
+            # Down
+            if r < rows - 1:
+                nb = (r + 1, c)
+                if is_walkable(nb):
+                    cost = (
+                        base_step_cost + int(dangerZones[nb[0], nb[1]]) * dangerWeight
+                    )
+                    G.add_edge(cur, nb, weight=cost)
+            # Left
+            if c > 0:
+                nb = (r, c - 1)
+                if is_walkable(nb):
+                    cost = (
+                        base_step_cost + int(dangerZones[nb[0], nb[1]]) * dangerWeight
+                    )
+                    G.add_edge(cur, nb, weight=cost)
+            # Right
+            if c < cols - 1:
+                nb = (r, c + 1)
+                if is_walkable(nb):
+                    cost = (
+                        base_step_cost + int(dangerZones[nb[0], nb[1]]) * dangerWeight
+                    )
+                    G.add_edge(cur, nb, weight=cost)
 
-    # Add the start cell to the frontier
-    fs = g[start] + heuristic(start, goal)
-    frontier_queue.put((fs, start))
+    # If start or goal are not present as nodes, add them so astar can consider them.
+    if start not in G:
+        G.add_node(start)
+    if goal not in G:
+        G.add_node(goal)
 
-    # Loop for A*
-    # While there is still more frontier to explore
-    while not frontier_queue.empty():
+    def manhattan(u, v):
+        return abs(u[0] - v[0]) + abs(u[1] - v[1])
 
-        # Pop the cell with lowest f value from the frontier
-        f, current = frontier_queue.get()
-
-        # Check if this cell is our goal
-        if current == goal:
-            path = buildPath(parents, goal)
-            return path
-
-        # Look at all the cells neighbors
-        for next in getNeighbors(grid, current):
-
-            # Update Danger Cost
-            dr, dc = next
-            danger_cost = int(dangerZones[dr, dc]) * dangerWeight
-
-            new_g_cost = g[current] + base_step_cost + danger_cost
-
-            # If we havent seen the neighbor cell, or found a better route to it
-            if next not in g or new_g_cost < g[next]:
-                # Save cost so far to this cell
-                g[next] = new_g_cost
-                # Generate priority cost
-                priority_cost = new_g_cost + heuristic(next, goal)
-                # Add next to parent map to be able to breadcrumb the path together
-                parents[next] = current
-                # Push next into the frontier
-                frontier_queue.put((priority_cost, next))
-
-    # If we cant find a path
-    itbroke = []
-    return itbroke
+    try:
+        path = nx.astar_path(G, start, goal, heuristic=manhattan, weight="weight")
+        # Ensure the first is start and last is goal like original
+        return path
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        return []

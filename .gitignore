@@ -1,0 +1,17 @@
+# PyCharm project files
+.idea/
+
+# Python build artifacts
+*.pyc
+*.pyo
+__pycache__/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Other common files to ignore
+.DS_Store
+.env
+*.log
