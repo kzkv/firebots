@@ -16,21 +16,21 @@ import pygame as pg
 import numpy as np
 
 
-def load_fire_bitmap(path, num_cols, num_rows):
+def load_fire_bitmap(path, cols, rows):
     fire_surface = pg.image.load(path).convert_alpha()
     surface_width, surface_height = fire_surface.get_width(), fire_surface.get_height()
-    cell_width, cell_height = surface_width // num_cols, surface_height // num_rows
+    cell_width, cell_height = surface_width // cols, surface_height // rows
     pixel_array = pg.surfarray.array3d(fire_surface)
-    fire_cells = np.zeros((num_rows, num_cols), dtype=bool)
+    fire_grid = np.zeros((rows, cols), dtype=bool)
 
     # majority rule per cell: count pixels
-    for row in range(num_rows):
+    for row in range(rows):
         y_start, y_end = row * cell_height, (row + 1) * cell_height
-        for col in range(num_cols):
+        for col in range(cols):
             x_start, x_end = col * cell_width, (col + 1) * cell_width
             block = pixel_array[x_start:x_end, y_start:y_end]
             non_black_pixels = np.count_nonzero(block.any(axis=2))
-            fire_cells[row, col] = non_black_pixels > (
+            fire_grid[row, col] = non_black_pixels > (
                 block.shape[0] * block.shape[1] // 2
             )
-    return fire_surface, fire_cells
+    return fire_surface, fire_grid
