@@ -17,7 +17,11 @@ FIRE_CELL_ALPHA = 128
 TREE_CELL_COLOR = (155, 103, 60)
 TREE_CELL_ALPHA = 200
 TREE_SPRITE_ALPHA = 200
+FIRELINE_CELL_COLOR = (255, 165, 0)
+FIRELINE_CELL_ALPHA = 200
 INSET = 2
+
+# TODO: homogenize sight discrepancies in the methods' code
 
 
 class World:
@@ -188,11 +192,11 @@ class World:
         rows, cols = tree_grid.shape
 
         for row in range(rows):
-            y_cell = row * self.cell_size
+            y = row * self.cell_size
             for col in range(cols):
                 if not tree_grid[row, col]:
                     continue
-                x_cell = col * self.cell_size
+                x = col * self.cell_size
 
                 # Deterministic index from (seed,row,col)
                 key = f"{row},{col}".encode()
@@ -200,8 +204,26 @@ class World:
                 idx = int.from_bytes(digest, "little") % len(scaled)
 
                 # Center 3x3 sprite on the cell (offset by 1 cell up/left)
-                dest = (x_cell - self.cell_size, y_cell - self.cell_size)
+                dest = (x - self.cell_size, y - self.cell_size)
                 tree_sprite_overlay.blit(scaled[idx], dest)
 
         tree_sprite_overlay.set_alpha(TREE_SPRITE_ALPHA)
         self.screen.blit(tree_sprite_overlay, self.field_rect.topleft)
+
+    def render_fireline_cells(self, fireline_grid):
+        overlay = pygame.Surface(self.field_rect.size, pygame.SRCALPHA)
+        cell = self.cell_size
+        rows, cols = fireline_grid.shape
+        for r in range(rows):
+            y = r * cell
+            for c in range(cols):
+                if fireline_grid[r, c]:
+                    x = c * cell
+                    pygame.draw.rect(
+                        overlay,
+                        (*FIRELINE_CELL_COLOR, FIRELINE_CELL_ALPHA),
+                        pygame.Rect(
+                            x + INSET, y + INSET, cell - 2 * INSET, cell - 2 * INSET
+                        ),
+                    )
+        self.screen.blit(overlay, self.field_rect.topleft)
