@@ -6,7 +6,7 @@ import pygame
 import numpy as np
 from fire_bitmap import load_fire_bitmap
 from obstacles import place_trees
-from planning import fireline_cells
+from planning import build_weight_grid
 from render import World
 
 # 6x3' field, 72x36", scale is 1" -> 1'
@@ -33,14 +33,24 @@ fire_surface, fire_grid = load_fire_bitmap("fire1.png", world.cols, world.rows)
 # Generate obstacles
 tree_grid = place_trees(world.cols, world.rows, count=TREE_COUNT, rng=rng)
 
-# Establish fire line
-fireline_grid = fireline_cells(fire_grid, gap=FIRELINE_FIRE_GAP, obstacles=tree_grid)
-
+# Establish cell weights
+weight_grid = build_weight_grid(
+    fire_grid,
+    tree_grid,
+    base_cost=1.0,
+    fire_1=50.0,
+    fire_2=20.0,
+    trunk_scale=10.0,
+    trunk_tau=0.5,  # quicker fade
+    trunk_max_radius=3,
+)
 
 while running:
     for e in pygame.event.get():
         if e.type == pygame.QUIT:
             running = False
+        else:
+            world.handle_event(e)
 
     world.clear()
     world.fire_bitmap_overlay(fire_surface)
@@ -48,7 +58,11 @@ while running:
     world.render_fire_cells(fire_grid)
     world.render_trees(tree_grid)
     world.render_tree_sprites(tree_grid, rng)
-    world.render_fireline_cells(fireline_grid)
+
+    if world.show_weights:
+        world.render_weight_heatmap(weight_grid)
+        world.render_weight_on_hover(weight_grid, decimals=1)
+    world.draw_hud()
 
     pygame.display.flip()
     world.clock.tick(60)
