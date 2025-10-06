@@ -21,6 +21,7 @@ FIRELINE_CELL_COLOR = (255, 165, 0)
 FIRELINE_CELL_ALPHA = 200
 INSET = 2
 
+
 # TODO: homogenize sight discrepancies in the methods' code
 
 
@@ -44,6 +45,13 @@ class World:
         self.clock = pygame.time.Clock()
 
         self.font = pygame.font.SysFont(None, self.cell_size - 4)
+        self.tooltip_font = pygame.font.SysFont(None, max(12, self.cell_size // 2))
+
+        self.show_weights = True
+        self.hud_font = pygame.font.SysFont(None, max(12, self.cell_size - 6))
+        self.hud_rect = pygame.Rect(
+            0, self.field_rect.bottom + self.margin, self.window_width, self.hud_height
+        )
 
     def clear(self):
         self.screen.fill(CELL_BG_COLOR)
@@ -227,3 +235,81 @@ class World:
                         ),
                     )
         self.screen.blit(overlay, self.field_rect.topleft)
+
+    def render_weight_heatmap(self, weights, vmax=None):
+        import numpy as np
+        overlay = pygame.Surface(self.field_rect.size, pygame.SRCALPHA)
+        cell = self.cell_size
+        finite = np.isfinite(weights)
+        if vmax is None:
+            # robust upper bound (ignore extreme outliers)
+            vmax = np.percentile(weights[finite], 95) if finite.any() else 1.0
+        vmax = max(vmax, 1e-6)
+
+        for r in range(self.rows):
+            y = r * cell
+            for c in range(self.cols):
+                w = weights[r, c]
+                if not np.isfinite(w):  # impassable
+                    color = (0, 0, 0, 180)
+                elif w <= 1.0:  # base cost
+                    continue
+                else:
+                    t = min(1.0, (w - 1.0) / vmax)  # 0..1
+                    # orange ramp
+                    color = (255, int(200 * (1 - t)), 0, int(160 * t) + 40)
+                pygame.draw.rect(overlay, color, pygame.Rect(c * cell, y, cell, cell))
+        self.screen.blit(overlay, self.field_rect.topleft)
+
+    def render_weight_on_hover(self, weights, decimals=0, *,
+                               text_color=(20, 20, 20), bg=(255, 255, 255), border=(40, 40, 40)):
+        import numpy as np, pygame as pg
+        mx, my = pg.mouse.get_pos()
+        if not self.field_rect.collidepoint(mx, my):
+            return
+        col = (mx - self.field_rect.left) // self.cell_size
+        row = (my - self.field_rect.top) // self.cell_size
+        if not (0 <= row < self.rows and 0 <= col < self.cols):
+            return
+
+        w = weights[row, col]
+        msg = "X" if not np.isfinite(w) else (f"{w:.{decimals}f}" if decimals else str(int(round(w))))
+        txt = self.tooltip_font.render(msg, True, text_color)
+
+        # simple tooltip near cursor, clamped to screen
+        pad = 4
+        tip_rect = txt.get_rect().inflate(pad * 2, pad * 2)
+        tip_rect.topleft = (mx + 12, my + 10)
+        tip_rect.clamp_ip(self.screen.get_rect())
+
+        tip = pg.Surface(tip_rect.size, pg.SRCALPHA)
+        tip.fill((*bg, 230))
+        pg.draw.rect(tip, (*border, 220), tip.get_rect(), 1)
+        self.screen.blit(tip, tip_rect.topleft)
+        self.screen.blit(txt, txt.get_rect(center=tip_rect.center))
+
+        # optional: highlight hovered cell
+        cell_rect = pg.Rect(self.field_rect.left + col * self.cell_size,
+                            self.field_rect.top + row * self.cell_size,
+                            self.cell_size, self.cell_size)
+        pg.draw.rect(self.screen, border, cell_rect, 1)
+
+    def draw_hud(self):
+        pygame.draw.rect(self.screen, HUD_BG_COLOR, self.hud_rect)
+        # simple checkbox + label
+        box = self.hud_height - 8
+        x, y = 10, self.hud_rect.top + 4
+        self.toggle_rect = pygame.Rect(x, y, box, box)
+        pygame.draw.rect(self.screen, (40, 40, 40), self.toggle_rect, 1)
+        if self.show_weights:
+            pygame.draw.line(self.screen, (40, 40, 40), (x + 3, y + box // 2), (x + box // 2, y + box - 3), 2)
+            pygame.draw.line(self.screen, (40, 40, 40), (x + box // 2, y + box - 3), (x + box - 3, y + 3), 2)
+        label = self.hud_font.render(f"Weights {'ON' if self.show_weights else 'OFF'}", True, (40, 40, 40))
+        self.screen.blit(label, (self.toggle_rect.right + 8, y + (box - label.get_height()) // 2))
+
+    def handle_event(self, e):
+        if e.type == pygame.KEYDOWN and e.key == pygame.K_w:
+            self.show_weights = not self.show_weights
+        elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+            if hasattr(self, "toggle_rect") and self.toggle_rect.collidepoint(e.pos):
+                self.show_weights = not self.show_weights
