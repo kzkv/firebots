@@ -2,6 +2,7 @@
 Tree sprite source: https://github.com/jube/slowtree
 """
 
+import math
 import hashlib
 import pygame
 
@@ -238,6 +239,7 @@ class World:
 
     def render_weight_heatmap(self, weights, vmax=None):
         import numpy as np
+
         overlay = pygame.Surface(self.field_rect.size, pygame.SRCALPHA)
         cell = self.cell_size
         finite = np.isfinite(weights)
@@ -261,9 +263,17 @@ class World:
                 pygame.draw.rect(overlay, color, pygame.Rect(c * cell, y, cell, cell))
         self.screen.blit(overlay, self.field_rect.topleft)
 
-    def render_weight_on_hover(self, weights, decimals=0, *,
-                               text_color=(20, 20, 20), bg=(255, 255, 255), border=(40, 40, 40)):
+    def render_weight_on_hover(
+        self,
+        weights,
+        decimals=0,
+        *,
+        text_color=(20, 20, 20),
+        bg=(255, 255, 255),
+        border=(40, 40, 40),
+    ):
         import numpy as np, pygame as pg
+
         mx, my = pg.mouse.get_pos()
         if not self.field_rect.collidepoint(mx, my):
             return
@@ -273,7 +283,11 @@ class World:
             return
 
         w = weights[row, col]
-        msg = "X" if not np.isfinite(w) else (f"{w:.{decimals}f}" if decimals else str(int(round(w))))
+        msg = (
+            "X"
+            if not np.isfinite(w)
+            else (f"{w:.{decimals}f}" if decimals else str(int(round(w))))
+        )
         txt = self.tooltip_font.render(msg, True, text_color)
 
         # simple tooltip near cursor, clamped to screen
@@ -289,9 +303,12 @@ class World:
         self.screen.blit(txt, txt.get_rect(center=tip_rect.center))
 
         # optional: highlight hovered cell
-        cell_rect = pg.Rect(self.field_rect.left + col * self.cell_size,
-                            self.field_rect.top + row * self.cell_size,
-                            self.cell_size, self.cell_size)
+        cell_rect = pg.Rect(
+            self.field_rect.left + col * self.cell_size,
+            self.field_rect.top + row * self.cell_size,
+            self.cell_size,
+            self.cell_size,
+        )
         pg.draw.rect(self.screen, border, cell_rect, 1)
 
     def draw_hud(self):
@@ -302,10 +319,26 @@ class World:
         self.toggle_rect = pygame.Rect(x, y, box, box)
         pygame.draw.rect(self.screen, (40, 40, 40), self.toggle_rect, 1)
         if self.show_weights:
-            pygame.draw.line(self.screen, (40, 40, 40), (x + 3, y + box // 2), (x + box // 2, y + box - 3), 2)
-            pygame.draw.line(self.screen, (40, 40, 40), (x + box // 2, y + box - 3), (x + box - 3, y + 3), 2)
-        label = self.hud_font.render(f"Weights {'ON' if self.show_weights else 'OFF'}", True, (40, 40, 40))
-        self.screen.blit(label, (self.toggle_rect.right + 8, y + (box - label.get_height()) // 2))
+            pygame.draw.line(
+                self.screen,
+                (40, 40, 40),
+                (x + 3, y + box // 2),
+                (x + box // 2, y + box - 3),
+                2,
+            )
+            pygame.draw.line(
+                self.screen,
+                (40, 40, 40),
+                (x + box // 2, y + box - 3),
+                (x + box - 3, y + 3),
+                2,
+            )
+        label = self.hud_font.render(
+            f"Weights {'ON' if self.show_weights else 'OFF'}", True, (40, 40, 40)
+        )
+        self.screen.blit(
+            label, (self.toggle_rect.right + 8, y + (box - label.get_height()) // 2)
+        )
 
     def handle_event(self, e):
         if e.type == pygame.KEYDOWN and e.key == pygame.K_w:
@@ -313,3 +346,88 @@ class World:
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if hasattr(self, "toggle_rect") and self.toggle_rect.collidepoint(e.pos):
                 self.show_weights = not self.show_weights
+
+    def load_firebot_sprite(self, path: str = "assets/firebot.png"):
+        """Load and scale the firebot sprite."""
+        sprite = pygame.image.load(path).convert_alpha()
+        # Scale to 3x3 cells
+        sprite_size = 3 * self.cell_size
+        self.firebot_sprite = pygame.transform.smoothscale(
+            sprite, (sprite_size, sprite_size)
+        )
+        # Store original for rotation
+        self.firebot_sprite_original = self.firebot_sprite.copy()
+
+    def render_firebot(self, firebot):
+        """Render the firebot at its current position with the correct rotation."""
+        if not hasattr(self, "firebot_sprite"):
+            self.load_firebot_sprite()
+
+        # Convert cell coordinates to screen coordinates
+        # Robot center in screen coords
+        screen_x = self.field_rect.left + firebot.x * self.cell_size
+        screen_y = self.field_rect.top + firebot.y * self.cell_size
+
+        # Sprite faces DOWN (+y screen), theta=0 means facing RIGHT (+x).
+        # Pygame rotates CCW with positive angles.
+        # Subtract 90° to align sprite's down direction with theta=0 (right).
+        angle_deg = -math.degrees(firebot.theta) - 90
+        rotated = pygame.transform.rotate(self.firebot_sprite_original, angle_deg)
+
+        # Get rect centered on robot position
+        rect = rotated.get_rect(center=(screen_x, screen_y))
+
+        self.screen.blit(rotated, rect)
+
+    def render_firebot_footprint(self, firebot, color=(0, 100, 255), alpha=80):
+        """Render the robot's 3x3 cell footprint as a transparent overlay."""
+        overlay = pygame.Surface(self.field_rect.size, pygame.SRCALPHA)
+        cell = self.cell_size
+
+        for row, col in firebot.get_footprint_cells():
+            if 0 <= row < self.rows and 0 <= col < self.cols:
+                x = col * cell
+                y = row * cell
+                pygame.draw.rect(
+                    overlay,
+                    (*color, alpha),
+                    pygame.Rect(x + 2, y + 2, cell - 4, cell - 4),
+                )
+        self.screen.blit(overlay, self.field_rect.topleft)
+
+    def render_target_marker(self, target_x: float, target_y: float, color=(0, 200, 0)):
+        """Render a target marker at the given cell coordinates."""
+        screen_x = self.field_rect.left + target_x * self.cell_size
+        screen_y = self.field_rect.top + target_y * self.cell_size
+
+        # Draw crosshair
+        size = self.cell_size // 2
+        pygame.draw.line(
+            self.screen,
+            color,
+            (screen_x - size, screen_y),
+            (screen_x + size, screen_y),
+            2,
+        )
+        pygame.draw.line(
+            self.screen,
+            color,
+            (screen_x, screen_y - size),
+            (screen_x, screen_y + size),
+            2,
+        )
+        pygame.draw.circle(
+            self.screen, color, (int(screen_x), int(screen_y)), size // 2, 2
+        )
+
+    def screen_to_cell(
+        self, screen_x: int, screen_y: int
+    ) -> tuple[float, float] | None:
+        """Convert screen coordinates to cell coordinates, or None if outside the field."""
+        if not self.field_rect.collidepoint(screen_x, screen_y):
+            return None
+
+        cell_x = (screen_x - self.field_rect.left) / self.cell_size
+        cell_y = (screen_y - self.field_rect.top) / self.cell_size
+
+        return cell_x, cell_y
