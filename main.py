@@ -104,8 +104,9 @@ while running:
     world.fire_bitmap_overlay(fire_surface)
     world.render_grid()
     world.render_fire_cells(fire_grid)
-    world.render_trees(tree_grid)
-    world.render_tree_sprites(tree_grid, rng)
+    world.render_trees(tree_grid, firebot)
+    world.render_tree_sprites(tree_grid, rng, firebot)
+    world.render_fog_of_war(firebot)
 
     if world.show_weights:
         world.render_weight_heatmap(weight_grid)

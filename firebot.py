@@ -15,11 +15,14 @@ class Firebot:
     Robot footprint: 3x3 cells (9x9 ft at 1 cell = 3 ft scale).
     """
 
-    def __init__(self, x: float, y: float, theta: float = 0.0):
+    def __init__(self, x: float, y: float, theta: float = 0.0, sensor_radius: float = 10.0):
         # Position in cell coordinates (fractional, continuous)
         self.x = x
         self.y = y
         self.theta = theta  # radians, 0 = facing right (+x), CCW positive
+
+        # Sensor radius for fog of war (in fractional cells)
+        self.sensor_radius = sensor_radius
 
         # Robot parameters (in cells)
         self.size = 3  # 3x3 cell footprint

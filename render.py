@@ -20,6 +20,8 @@ TREE_CELL_ALPHA = 200
 TREE_SPRITE_ALPHA = 200
 FIRELINE_CELL_COLOR = (255, 165, 0)
 FIRELINE_CELL_ALPHA = 200
+FOG_OF_WAR_COLOR = (40, 40, 40)
+FOG_OF_WAR_ALPHA = 200
 INSET = 2
 
 
@@ -162,7 +164,7 @@ class World:
                     )
         self.screen.blit(fire_overlay, self.field_rect.topleft)
 
-    def render_trees(self, tree_grid):
+    def render_trees(self, tree_grid, firebot=None):
         rows, cols = tree_grid.shape
         # colored overlay
         tree_overlay = pygame.Surface(
@@ -173,6 +175,9 @@ class World:
             y = r * self.cell_size
             for c in range(cols):
                 if tree_grid[r, c]:
+                    # Skip if outside sensor radius (when firebot is provided)
+                    if firebot is not None and not self.is_cell_visible(r, c, firebot):
+                        continue
                     x = c * self.cell_size
                     pygame.draw.rect(
                         tree_overlay,
@@ -181,7 +186,7 @@ class World:
                     )
         self.screen.blit(tree_overlay, self.field_rect.topleft)
 
-    def render_tree_sprites(self, tree_grid, rng):
+    def render_tree_sprites(self, tree_grid, rng, firebot=None):
         sprites = [
             pygame.image.load("assets/tree1.png").convert_alpha(),
             pygame.image.load("assets/tree2.png").convert_alpha(),
@@ -204,6 +209,9 @@ class World:
             y = row * self.cell_size
             for col in range(cols):
                 if not tree_grid[row, col]:
+                    continue
+                # Skip if outside sensor radius (when firebot is provided)
+                if firebot is not None and not self.is_cell_visible(row, col, firebot):
                     continue
                 x = col * self.cell_size
 
@@ -431,3 +439,54 @@ class World:
         cell_y = (screen_y - self.field_rect.top) / self.cell_size
 
         return cell_x, cell_y
+
+    def is_cell_visible(self, row: int, col: int, firebot) -> bool:
+        """Check if a cell is within the firebot's sensor radius."""
+        # Calculate distance from cell center to firebot position
+        cell_center_x = col + 0.5
+        cell_center_y = row + 0.5
+        dx = cell_center_x - firebot.x
+        dy = cell_center_y - firebot.y
+        distance = math.sqrt(dx * dx + dy * dy)
+        return distance <= firebot.sensor_radius
+
+    def render_fog_of_war(self, firebot):
+        """
+        Render fog of war overlay that obscures areas outside the sensor radius.
+        Uses a circular reveal centered on the firebot's position.
+        """
+        overlay = pygame.Surface(self.field_rect.size, pygame.SRCALPHA)
+        cell = self.cell_size
+
+        # Fill with fog color
+        overlay.fill((*FOG_OF_WAR_COLOR, FOG_OF_WAR_ALPHA))
+
+        # Create a circular mask to reveal visible area
+        # Convert firebot position to pixel coordinates (relative to field)
+        center_x = firebot.x * cell
+        center_y = firebot.y * cell
+        radius_px = firebot.sensor_radius * cell
+
+        # Draw a transparent circle to reveal the visible area
+        pygame.draw.circle(
+            overlay,
+            (0, 0, 0, 0),  # Fully transparent
+            (int(center_x), int(center_y)),
+            int(radius_px),
+        )
+
+        self.screen.blit(overlay, self.field_rect.topleft)
+
+    def render_sensor_radius_outline(self, firebot, color=(100, 200, 255), width=2):
+        """Render an outline showing the sensor radius."""
+        center_x = self.field_rect.left + firebot.x * self.cell_size
+        center_y = self.field_rect.top + firebot.y * self.cell_size
+        radius_px = firebot.sensor_radius * self.cell_size
+
+        pygame.draw.circle(
+            self.screen,
+            color,
+            (int(center_x), int(center_y)),
+            int(radius_px),
+            width,
+        )
