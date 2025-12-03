@@ -1,5 +1,6 @@
 # ChatGPT to draft cells weights
 
+import math
 import numpy as np
 
 
@@ -96,3 +97,118 @@ def build_weight_grid(
     cost[mask] += penalty[mask].astype(cost.dtype)
 
     return cost
+
+
+def compute_fire_forbidden_zone(
+    fire_grid: np.ndarray,
+    robot_size: int = 3,
+    margin: float = 0.5,
+) -> np.ndarray:
+    """
+    Compute the forbidden zone for the robot center using Minkowski sum inflation.
+
+    The robot is robot_size x robot_size cells. To prevent any part of the robot
+    from entering fire, we inflate the fire cells by (robot_size // 2 + margin).
+
+    Args:
+        fire_grid: Boolean grid where True = fire cell
+        robot_size: Robot footprint size (default 3 for 3x3)
+        margin: Additional margin in fractional cells
+
+    Returns:
+        Boolean grid where True = robot center cannot be here
+    """
+    # Minkowski radius: half the robot size (rounded down) + margin
+    # For a 3x3 robot, the center is 1 cell from edge, so inflate by 1 + margin
+    inflation_radius = robot_size // 2 + margin
+
+    rows, cols = fire_grid.shape
+    forbidden = np.zeros((rows, cols), dtype=bool)
+
+    # For each fire cell, mark all cells within inflation_radius as forbidden
+    fire_positions = np.argwhere(fire_grid)
+
+    for fire_row, fire_col in fire_positions:
+        # Check all cells that could be within range
+        r_min = max(0, int(fire_row - inflation_radius - 1))
+        r_max = min(rows, int(fire_row + inflation_radius + 2))
+        c_min = max(0, int(fire_col - inflation_radius - 1))
+        c_max = min(cols, int(fire_col + inflation_radius + 2))
+
+        for r in range(r_min, r_max):
+            for c in range(c_min, c_max):
+                # Distance from cell center to fire cell center
+                dist = math.sqrt((r - fire_row) ** 2 + (c - fire_col) ** 2)
+                if dist <= inflation_radius:
+                    forbidden[r, c] = True
+
+    return forbidden
+
+
+def find_nearest_fire_approach_point(
+    fire_grid: np.ndarray,
+    robot_x: float,
+    robot_y: float,
+    robot_size: int = 3,
+    margin: float = 0.5,
+) -> tuple[float, float] | None:
+    """
+    Find the nearest point where the robot center can be to approach the fire.
+
+    This finds cells on the boundary of the forbidden zone (just outside it)
+    that are closest to the robot's current position.
+
+    Args:
+        fire_grid: Boolean grid where True = fire cell
+        robot_x: Robot center x position (in cells)
+        robot_y: Robot center y position (in cells, corresponds to row)
+        robot_size: Robot footprint size (default 3 for 3x3)
+        margin: Additional margin in fractional cells
+
+    Returns:
+        (x, y) of the nearest approach point, or None if no valid point exists
+    """
+    rows, cols = fire_grid.shape
+
+    # Compute forbidden zone
+    forbidden = compute_fire_forbidden_zone(fire_grid, robot_size, margin)
+
+    # If no fire, return None
+    if not fire_grid.any():
+        return None
+
+    # Find cells that are:
+    # 1. Not forbidden (robot can be here)
+    # 2. Adjacent to forbidden zone (as close as possible to fire)
+
+    # Dilate forbidden zone by 1 to find the boundary
+    boundary_zone = _dilate8(forbidden, 1) & ~forbidden
+
+    # Also need to ensure we're within grid bounds with enough room for robot
+    half = robot_size // 2
+    valid_mask = np.zeros((rows, cols), dtype=bool)
+    valid_mask[half:rows-half, half:cols-half] = True
+
+    # Candidate cells: on boundary and valid for robot placement
+    candidates = boundary_zone & valid_mask
+
+    if not candidates.any():
+        # No boundary found, try just finding closest non-forbidden cell
+        candidates = ~forbidden & valid_mask
+        if not candidates.any():
+            return None
+
+    # Find the candidate closest to robot position
+    candidate_positions = np.argwhere(candidates)
+
+    best_dist = float('inf')
+    best_pos = None
+
+    for row, col in candidate_positions:
+        # Distance from robot to this cell center
+        dist = math.sqrt((col - robot_x) ** 2 + (row - robot_y) ** 2)
+        if dist < best_dist:
+            best_dist = dist
+            best_pos = (float(col), float(row))
+
+    return best_pos

@@ -6,7 +6,7 @@ import pygame
 import numpy as np
 from fire_bitmap import load_fire_bitmap
 from obstacles import place_trees
-from planning import build_weight_grid
+from planning import build_weight_grid, find_nearest_fire_approach_point
 from render import World
 from firebot import Firebot
 
@@ -28,8 +28,8 @@ world = World(ROWS, COLS, CELL_SIZE)
 running = True
 
 # Ingest fire bitmap
-fire_surface, fire_grid = load_fire_bitmap("fire1.png", world.cols, world.rows)
-# fire_surface, fire_grid = load_fire_bitmap("fire2.png", world.cols, world.rows)
+# fire_surface, fire_grid = load_fire_bitmap("fire1.png", world.cols, world.rows)
+fire_surface, fire_grid = load_fire_bitmap("fire2.png", world.cols, world.rows)
 
 # Generate obstacles
 tree_grid = place_trees(world.cols, world.rows, count=TREE_COUNT, rng=rng)
@@ -91,6 +91,18 @@ while running:
                 firebot.v = 0.0
                 firebot.omega = 0.0
                 target_pos = None
+            elif e.key == pygame.K_f:
+                # Find and drive to nearest fire approach point
+                approach_point = find_nearest_fire_approach_point(
+                    fire_grid,
+                    firebot.x,
+                    firebot.y,
+                    robot_size=firebot.size,
+                    margin=firebot.fire_approach_margin,
+                )
+                if approach_point is not None:
+                    target_pos = approach_point
+                    firebot.set_target(approach_point[0], approach_point[1])
 
     # Update firebot motion controller
     firebot.control_step(dt)

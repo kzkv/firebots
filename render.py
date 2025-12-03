@@ -50,7 +50,7 @@ class World:
         self.font = pygame.font.SysFont(None, self.cell_size - 4)
         self.tooltip_font = pygame.font.SysFont(None, max(12, self.cell_size // 2))
 
-        self.show_weights = True
+        self.show_weights = False
         self.hud_font = pygame.font.SysFont(None, max(12, self.cell_size - 6))
         self.hud_rect = pygame.Rect(
             0, self.field_rect.bottom + self.margin, self.window_width, self.hud_height
