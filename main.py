@@ -6,7 +6,7 @@ import pygame
 import numpy as np
 from fire_bitmap import load_fire_bitmap
 from obstacles import place_trees
-from planning import build_weight_grid, find_nearest_fire_approach_point
+from planning import build_weight_grid, find_nearest_fire_approach_point, compute_fire_forbidden_zone
 from render import World
 from firebot import Firebot
 
@@ -50,6 +50,13 @@ weight_grid = build_weight_grid(
 # Robot is 3x3 cells, so place center at (5, ROWS//2) to be safely inside
 firebot = Firebot(x=5.0, y=ROWS / 2.0, theta=0.0)
 
+# Compute forbidden zone for visualization (with subgrid resolution)
+FORBIDDEN_ZONE_RESOLUTION = 4  # subcells per cell
+forbidden_zone, forbidden_zone_res = compute_fire_forbidden_zone(
+    fire_grid, robot_size=firebot.size, margin=firebot.fire_approach_margin,
+    resolution=FORBIDDEN_ZONE_RESOLUTION
+)
+
 # Preload firebot sprite
 world.load_firebot_sprite()
 
@@ -63,24 +70,17 @@ while running:
         if e.type == pygame.QUIT:
             running = False
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
-            # Left click - check if it's on the field
-            cell_pos = world.screen_to_cell(e.pos[0], e.pos[1])
-            if cell_pos is not None:
-                # Check if clicking on HUD toggle
-                if hasattr(world, "toggle_rect") and world.toggle_rect.collidepoint(
-                    e.pos
-                ):
-                    world.show_weights = not world.show_weights
-                else:
-                    # Set new target for firebot
+            # Check HUD clicks first
+            if hasattr(world, "toggle_rect") and world.toggle_rect.collidepoint(e.pos):
+                world.show_weights = not world.show_weights
+            elif hasattr(world, "forbidden_zone_toggle_rect") and world.forbidden_zone_toggle_rect.collidepoint(e.pos):
+                world.show_forbidden_zone = not world.show_forbidden_zone
+            else:
+                # Left click on field - set target
+                cell_pos = world.screen_to_cell(e.pos[0], e.pos[1])
+                if cell_pos is not None:
                     target_pos = cell_pos
                     firebot.set_target(cell_pos[0], cell_pos[1])
-            else:
-                # Check HUD click
-                if hasattr(world, "toggle_rect") and world.toggle_rect.collidepoint(
-                    e.pos
-                ):
-                    world.show_weights = not world.show_weights
         elif e.type == pygame.KEYDOWN:
             if e.key == pygame.K_w:
                 world.show_weights = not world.show_weights
@@ -123,6 +123,9 @@ while running:
     if world.show_weights:
         world.render_weight_heatmap(weight_grid)
         world.render_weight_on_hover(weight_grid, decimals=1)
+
+    if world.show_forbidden_zone:
+        world.render_forbidden_zone(forbidden_zone, forbidden_zone_res)
 
     # Render target marker if we have one
     if target_pos is not None:

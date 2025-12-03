@@ -22,6 +22,8 @@ FIRELINE_CELL_COLOR = (255, 165, 0)
 FIRELINE_CELL_ALPHA = 200
 FOG_OF_WAR_COLOR = (40, 40, 40)
 FOG_OF_WAR_ALPHA = 200
+FORBIDDEN_ZONE_COLOR = (180, 0, 180)
+FORBIDDEN_ZONE_ALPHA = 100
 INSET = 2
 
 
@@ -51,6 +53,7 @@ class World:
         self.tooltip_font = pygame.font.SysFont(None, max(12, self.cell_size // 2))
 
         self.show_weights = False
+        self.show_forbidden_zone = False
         self.hud_font = pygame.font.SysFont(None, max(12, self.cell_size - 6))
         self.hud_rect = pygame.Rect(
             0, self.field_rect.bottom + self.margin, self.window_width, self.hud_height
@@ -245,6 +248,28 @@ class World:
                     )
         self.screen.blit(overlay, self.field_rect.topleft)
 
+    def render_forbidden_zone(self, forbidden_zone, resolution):
+        """Render the forbidden zone (Minkowski-inflated fire) as a semi-transparent overlay.
+
+        Args:
+            forbidden_zone: Boolean grid at subgrid resolution
+            resolution: Number of subcells per cell
+        """
+        overlay = pygame.Surface(self.field_rect.size, pygame.SRCALPHA)
+        subcell_size = self.cell_size / resolution
+        sub_rows, sub_cols = forbidden_zone.shape
+        for r in range(sub_rows):
+            y = r * subcell_size
+            for c in range(sub_cols):
+                if forbidden_zone[r, c]:
+                    x = c * subcell_size
+                    pygame.draw.rect(
+                        overlay,
+                        (*FORBIDDEN_ZONE_COLOR, FORBIDDEN_ZONE_ALPHA),
+                        pygame.Rect(x, y, subcell_size + 1, subcell_size + 1),
+                    )
+        self.screen.blit(overlay, self.field_rect.topleft)
+
     def render_weight_heatmap(self, weights, vmax=None):
         import numpy as np
 
@@ -319,14 +344,11 @@ class World:
         )
         pg.draw.rect(self.screen, border, cell_rect, 1)
 
-    def draw_hud(self):
-        pygame.draw.rect(self.screen, HUD_BG_COLOR, self.hud_rect)
-        # simple checkbox + label
-        box = self.hud_height - 8
-        x, y = 10, self.hud_rect.top + 4
-        self.toggle_rect = pygame.Rect(x, y, box, box)
-        pygame.draw.rect(self.screen, (40, 40, 40), self.toggle_rect, 1)
-        if self.show_weights:
+    def _draw_checkbox(self, x, y, box, checked, label_text):
+        """Draw a checkbox with label and return its rect."""
+        rect = pygame.Rect(x, y, box, box)
+        pygame.draw.rect(self.screen, (40, 40, 40), rect, 1)
+        if checked:
             pygame.draw.line(
                 self.screen,
                 (40, 40, 40),
@@ -341,11 +363,25 @@ class World:
                 (x + box - 3, y + 3),
                 2,
             )
-        label = self.hud_font.render(
-            f"Weights {'ON' if self.show_weights else 'OFF'}", True, (40, 40, 40)
+        label = self.hud_font.render(label_text, True, (40, 40, 40))
+        self.screen.blit(label, (rect.right + 8, y + (box - label.get_height()) // 2))
+        return rect, rect.right + 8 + label.get_width()
+
+    def draw_hud(self):
+        pygame.draw.rect(self.screen, HUD_BG_COLOR, self.hud_rect)
+        box = self.hud_height - 8
+        y = self.hud_rect.top + 4
+
+        # Weights checkbox
+        x = 10
+        self.toggle_rect, next_x = self._draw_checkbox(
+            x, y, box, self.show_weights, f"Weights {'ON' if self.show_weights else 'OFF'}"
         )
-        self.screen.blit(
-            label, (self.toggle_rect.right + 8, y + (box - label.get_height()) // 2)
+
+        # Forbidden Zone checkbox
+        x = next_x + 20
+        self.forbidden_zone_toggle_rect, _ = self._draw_checkbox(
+            x, y, box, self.show_forbidden_zone, f"Forbidden Zone {'ON' if self.show_forbidden_zone else 'OFF'}"
         )
 
     def handle_event(self, e):
@@ -354,6 +390,8 @@ class World:
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if hasattr(self, "toggle_rect") and self.toggle_rect.collidepoint(e.pos):
                 self.show_weights = not self.show_weights
+            elif hasattr(self, "forbidden_zone_toggle_rect") and self.forbidden_zone_toggle_rect.collidepoint(e.pos):
+                self.show_forbidden_zone = not self.show_forbidden_zone
 
     def load_firebot_sprite(self, path: str = "assets/firebot.png"):
         """Load and scale the firebot sprite."""

@@ -99,50 +99,93 @@ def build_weight_grid(
     return cost
 
 
+def _distance_point_to_cell_edge(px: float, py: float, cell_row: int, cell_col: int) -> float:
+    """
+    Compute the distance from a point to the nearest edge of a cell.
+
+    The cell occupies the area [cell_col, cell_col+1] x [cell_row, cell_row+1].
+    If the point is inside the cell, distance is 0.
+
+    Args:
+        px, py: Point coordinates (x=col, y=row)
+        cell_row, cell_col: Cell indices
+
+    Returns:
+        Distance from point to nearest cell edge (0 if inside)
+    """
+    # Cell boundaries
+    left = cell_col
+    right = cell_col + 1
+    top = cell_row
+    bottom = cell_row + 1
+
+    # Clamp point to cell boundaries to find nearest point on cell
+    nearest_x = max(left, min(px, right))
+    nearest_y = max(top, min(py, bottom))
+
+    # Distance from point to nearest point on cell
+    dx = px - nearest_x
+    dy = py - nearest_y
+    return math.sqrt(dx * dx + dy * dy)
+
+
 def compute_fire_forbidden_zone(
     fire_grid: np.ndarray,
     robot_size: int = 3,
     margin: float = 0.5,
-) -> np.ndarray:
+    resolution: int = 4,
+) -> tuple[np.ndarray, int]:
     """
     Compute the forbidden zone for the robot center using Minkowski sum inflation.
 
     The robot is robot_size x robot_size cells. To prevent any part of the robot
-    from entering fire, we inflate the fire cells by (robot_size // 2 + margin).
+    from entering fire, we inflate fire cells by (robot_size / 2 + margin) from
+    the cell edges (not centers).
+
+    Uses a finer subgrid for more precise boundary representation.
 
     Args:
         fire_grid: Boolean grid where True = fire cell
         robot_size: Robot footprint size (default 3 for 3x3)
         margin: Additional margin in fractional cells
+        resolution: Subdivisions per cell (default 4, so each cell becomes 4x4 subcells)
 
     Returns:
-        Boolean grid where True = robot center cannot be here
+        Tuple of (forbidden zone at subgrid resolution, resolution factor)
     """
-    # Minkowski radius: half the robot size (rounded down) + margin
-    # For a 3x3 robot, the center is 1 cell from edge, so inflate by 1 + margin
-    inflation_radius = robot_size // 2 + margin
+    # Inflation distance from fire cell EDGE
+    # For a 3x3 robot, center is 1.5 cells from edge, so we need 1.5 + margin
+    inflation_dist = robot_size / 2.0 + margin
 
     rows, cols = fire_grid.shape
-    forbidden = np.zeros((rows, cols), dtype=bool)
+    sub_rows, sub_cols = rows * resolution, cols * resolution
+    forbidden = np.zeros((sub_rows, sub_cols), dtype=bool)
 
-    # For each fire cell, mark all cells within inflation_radius as forbidden
     fire_positions = np.argwhere(fire_grid)
 
+    # For efficiency, compute search range based on inflation distance
+    search_range = int(math.ceil(inflation_dist)) + 1
+
     for fire_row, fire_col in fire_positions:
-        # Check all cells that could be within range
-        r_min = max(0, int(fire_row - inflation_radius - 1))
-        r_max = min(rows, int(fire_row + inflation_radius + 2))
-        c_min = max(0, int(fire_col - inflation_radius - 1))
-        c_max = min(cols, int(fire_col + inflation_radius + 2))
+        # Check all subcells that could be within range
+        r_min = max(0, (fire_row - search_range) * resolution)
+        r_max = min(sub_rows, (fire_row + search_range + 1) * resolution)
+        c_min = max(0, (fire_col - search_range) * resolution)
+        c_max = min(sub_cols, (fire_col + search_range + 1) * resolution)
 
         for r in range(r_min, r_max):
             for c in range(c_min, c_max):
-                # Distance from cell center to fire cell center
-                dist = math.sqrt((r - fire_row) ** 2 + (c - fire_col) ** 2)
-                if dist <= inflation_radius:
+                # Subcell center in cell coordinates
+                sub_center_x = (c + 0.5) / resolution
+                sub_center_y = (r + 0.5) / resolution
+
+                # Distance from subcell center to fire cell edge
+                dist = _distance_point_to_cell_edge(sub_center_x, sub_center_y, fire_row, fire_col)
+
+                if dist <= inflation_dist:
                     forbidden[r, c] = True
 
-    return forbidden
+    return forbidden, resolution
 
 
 def find_nearest_fire_approach_point(
@@ -151,11 +194,12 @@ def find_nearest_fire_approach_point(
     robot_y: float,
     robot_size: int = 3,
     margin: float = 0.5,
+    resolution: int = 4,
 ) -> tuple[float, float] | None:
     """
     Find the nearest point where the robot center can be to approach the fire.
 
-    This finds cells on the boundary of the forbidden zone (just outside it)
+    This finds subcells on the boundary of the forbidden zone (just outside it)
     that are closest to the robot's current position.
 
     Args:
@@ -164,36 +208,39 @@ def find_nearest_fire_approach_point(
         robot_y: Robot center y position (in cells, corresponds to row)
         robot_size: Robot footprint size (default 3 for 3x3)
         margin: Additional margin in fractional cells
+        resolution: Subdivisions per cell for precision
 
     Returns:
         (x, y) of the nearest approach point, or None if no valid point exists
     """
     rows, cols = fire_grid.shape
 
-    # Compute forbidden zone
-    forbidden = compute_fire_forbidden_zone(fire_grid, robot_size, margin)
-
     # If no fire, return None
     if not fire_grid.any():
         return None
 
-    # Find cells that are:
+    # Compute forbidden zone at subgrid resolution
+    forbidden, res = compute_fire_forbidden_zone(fire_grid, robot_size, margin, resolution)
+    sub_rows, sub_cols = rows * res, cols * res
+
+    # Find subcells that are:
     # 1. Not forbidden (robot can be here)
     # 2. Adjacent to forbidden zone (as close as possible to fire)
 
-    # Dilate forbidden zone by 1 to find the boundary
+    # Dilate forbidden zone by 1 subcell to find the boundary
     boundary_zone = _dilate8(forbidden, 1) & ~forbidden
 
     # Also need to ensure we're within grid bounds with enough room for robot
-    half = robot_size // 2
-    valid_mask = np.zeros((rows, cols), dtype=bool)
-    valid_mask[half:rows-half, half:cols-half] = True
+    # Convert robot half-size to subcell units
+    half_sub = (robot_size // 2) * res
+    valid_mask = np.zeros((sub_rows, sub_cols), dtype=bool)
+    valid_mask[half_sub:sub_rows-half_sub, half_sub:sub_cols-half_sub] = True
 
-    # Candidate cells: on boundary and valid for robot placement
+    # Candidate subcells: on boundary and valid for robot placement
     candidates = boundary_zone & valid_mask
 
     if not candidates.any():
-        # No boundary found, try just finding closest non-forbidden cell
+        # No boundary found, try just finding closest non-forbidden subcell
         candidates = ~forbidden & valid_mask
         if not candidates.any():
             return None
@@ -201,14 +248,22 @@ def find_nearest_fire_approach_point(
     # Find the candidate closest to robot position
     candidate_positions = np.argwhere(candidates)
 
+    # Convert robot position to subcell coordinates
+    robot_sub_x = robot_x * res
+    robot_sub_y = robot_y * res
+
     best_dist = float('inf')
     best_pos = None
 
-    for row, col in candidate_positions:
-        # Distance from robot to this cell center
-        dist = math.sqrt((col - robot_x) ** 2 + (row - robot_y) ** 2)
+    for sub_row, sub_col in candidate_positions:
+        # Subcell center coordinates
+        sub_center_x = sub_col + 0.5
+        sub_center_y = sub_row + 0.5
+        # Distance from robot to this subcell center
+        dist = math.sqrt((sub_center_x - robot_sub_x) ** 2 + (sub_center_y - robot_sub_y) ** 2)
         if dist < best_dist:
             best_dist = dist
-            best_pos = (float(col), float(row))
+            # Convert back to cell coordinates
+            best_pos = (sub_center_x / res, sub_center_y / res)
 
     return best_pos
