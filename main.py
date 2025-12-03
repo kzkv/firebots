@@ -118,6 +118,17 @@ while running:
     world.render_fire_cells(fire_grid)
     world.render_trees(tree_grid, firebot)
     world.render_tree_sprites(tree_grid, rng, firebot)
+
+    # Render fireline path (before fog of war so it's visible)
+    if firebot.cutting_fireline:
+        # Include current front position if moving to show line in real-time
+        path = list(firebot.fireline_path)
+        if firebot.state in ("driving", "rotating"):
+            front = firebot.front_position
+            path.append((front[0], front[1], firebot.theta))
+        if len(path) >= 1:
+            world.render_fireline_path(path)
+
     world.render_fog_of_war(firebot)
 
     if world.show_weights:

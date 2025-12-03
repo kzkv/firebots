@@ -20,6 +20,8 @@ TREE_CELL_ALPHA = 200
 TREE_SPRITE_ALPHA = 200
 FIRELINE_CELL_COLOR = (255, 165, 0)
 FIRELINE_CELL_ALPHA = 200
+FIRELINE_PATH_COLOR = (139, 90, 43)  # saddle brown for cut fireline
+FIRELINE_PATH_ALPHA = 180
 FOG_OF_WAR_COLOR = (40, 40, 40)
 FOG_OF_WAR_ALPHA = 200
 FORBIDDEN_ZONE_COLOR = (180, 0, 180)
@@ -268,6 +270,44 @@ class World:
                         (*FORBIDDEN_ZONE_COLOR, FORBIDDEN_ZONE_ALPHA),
                         pygame.Rect(x, y, subcell_size + 1, subcell_size + 1),
                     )
+        self.screen.blit(overlay, self.field_rect.topleft)
+
+    def render_fireline_path(self, path: list[tuple[float, float, float]], width_cells: float = 2.5):
+        """
+        Render the fireline by stamping shovel lines at each sample point.
+
+        Args:
+            path: List of (x, y, theta) - front position and heading
+            width_cells: Width of the shovel in cells (default 2.5)
+        """
+        if len(path) < 1:
+            return
+
+        # Draw solid lines first, then apply alpha to whole surface
+        overlay = pygame.Surface(self.field_rect.size)
+        overlay.fill((0, 0, 0))  # black background for colorkey
+        overlay.set_colorkey((0, 0, 0))  # black is transparent
+
+        half_width = width_cells * self.cell_size / 2
+        # Line thickness should be thick enough to fill gaps between samples
+        line_thickness = max(3, int(self.cell_size * 0.3))
+
+        # Draw a line (the shovel) at each sample point
+        for x, y, theta in path:
+            sx = x * self.cell_size
+            sy = y * self.cell_size
+
+            # Perpendicular to heading (shovel is perpendicular to travel direction)
+            perp_x = -math.sin(theta) * half_width
+            perp_y = math.cos(theta) * half_width
+
+            left = (sx + perp_x, sy + perp_y)
+            right = (sx - perp_x, sy - perp_y)
+
+            pygame.draw.line(overlay, FIRELINE_PATH_COLOR, left, right, line_thickness)
+
+        # Apply alpha to the entire surface
+        overlay.set_alpha(FIRELINE_PATH_ALPHA)
         self.screen.blit(overlay, self.field_rect.topleft)
 
     def render_weight_heatmap(self, weights, vmax=None):

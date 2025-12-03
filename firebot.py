@@ -56,6 +56,19 @@ class Firebot:
         self.angle_threshold = 0.05  # rad (~3 deg) - when to stop rotating
         self.distance_threshold = 0.1  # cells - when to stop driving
 
+        # Fireline cutting mode
+        self.cutting_fireline = True  # when True, record path as fireline
+        # Each sample is (x, y, theta) - front position and heading for shovel line
+        self.fireline_path: list[tuple[float, float, float]] = []
+        self._last_fireline_pos: tuple[float, float] | None = None
+        self._last_fireline_theta: float | None = None
+        self.fireline_sample_dist = (
+            0.001  # min distance between samples when driving (cells)
+        )
+        self.fireline_sample_angle = (
+            0.1  # min angle change between samples when rotating (radians, ~3 deg)
+        )
+
     def update(self, dt: float):
         """
         Update robot state using unicycle kinematics:
@@ -101,10 +114,14 @@ class Firebot:
         angle_error = self._normalize_angle(target_angle - self.theta)
 
         if self.state == "rotating":
+            # Sample fireline during rotation
+            self._sample_fireline()
+
             # Rotate to face target
             if abs(angle_error) < self.angle_threshold:
                 self.omega = 0.0
                 self.state = "driving"
+                self._sample_fireline()
             else:
                 # P controller for rotation
                 self.omega = np.clip(
@@ -115,12 +132,17 @@ class Firebot:
                 self.v = 0.0
 
         elif self.state == "driving":
+            # Sample fireline while driving
+            self._sample_fireline()
+
             # Check if we've arrived
             if distance < self.distance_threshold:
                 self.v = 0.0
                 self.omega = 0.0
                 self.state = "idle"
                 self.target = None
+                # Final sample at arrival
+                self._sample_fireline()
                 return
 
             # Recalculate angle error while driving (small corrections)
@@ -186,6 +208,36 @@ class Firebot:
         """Check if robot is currently moving."""
         return self.state != "idle" or abs(self.v) > 0.01 or abs(self.omega) > 0.01
 
+    def _sample_fireline(self):
+        """Record front position and heading for fireline if moved or rotated enough."""
+        if not self.cutting_fireline:
+            return
+
+        front = self.front_position
+
+        if self._last_fireline_pos is None or self._last_fireline_theta is None:
+            # First sample
+            self.fireline_path.append((front[0], front[1], self.theta))
+            self._last_fireline_pos = front
+            self._last_fireline_theta = self.theta
+            return
+
+        # Check distance from last sample
+        dx = front[0] - self._last_fireline_pos[0]
+        dy = front[1] - self._last_fireline_pos[1]
+        dist = math.sqrt(dx * dx + dy * dy)
+
+        # Check angle change from last sample
+        angle_diff = abs(self._normalize_angle(self.theta - self._last_fireline_theta))
+
+        if (
+            dist >= self.fireline_sample_dist
+            or angle_diff >= self.fireline_sample_angle
+        ):
+            self.fireline_path.append((front[0], front[1], self.theta))
+            self._last_fireline_pos = front
+            self._last_fireline_theta = self.theta
+
     @staticmethod
     def _normalize_angle(angle: float) -> float:
         """Normalize angle to [-pi, pi]."""
@@ -195,6 +247,14 @@ class Firebot:
     def position(self) -> tuple[float, float]:
         """Get current position as (x, y)."""
         return (self.x, self.y)
+
+    @property
+    def front_position(self) -> tuple[float, float]:
+        """Get position of the front edge center (1.5 cells ahead of center)."""
+        front_offset = self.size / 2.0  # 1.5 cells for 3x3 robot
+        front_x = self.x + front_offset * math.cos(self.theta)
+        front_y = self.y + front_offset * math.sin(self.theta)
+        return (front_x, front_y)
 
     @property
     def heading_deg(self) -> float:
