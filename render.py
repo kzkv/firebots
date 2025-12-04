@@ -20,6 +20,12 @@ TREE_CELL_ALPHA = 200
 TREE_SPRITE_ALPHA = 200
 FIRELINE_CELL_COLOR = (255, 165, 0)
 FIRELINE_CELL_ALPHA = 200
+FIRELINE_PATH_COLOR = (139, 90, 43)  # saddle brown for cut fireline
+FIRELINE_PATH_ALPHA = 180
+FOG_OF_WAR_COLOR = (40, 40, 40)
+FOG_OF_WAR_ALPHA = 200
+FORBIDDEN_ZONE_COLOR = (180, 0, 180)
+FORBIDDEN_ZONE_ALPHA = 100
 INSET = 2
 
 
@@ -48,7 +54,8 @@ class World:
         self.font = pygame.font.SysFont(None, self.cell_size - 4)
         self.tooltip_font = pygame.font.SysFont(None, max(12, self.cell_size // 2))
 
-        self.show_weights = True
+        self.show_weights = False
+        self.show_forbidden_zone = False
         self.hud_font = pygame.font.SysFont(None, max(12, self.cell_size - 6))
         self.hud_rect = pygame.Rect(
             0, self.field_rect.bottom + self.margin, self.window_width, self.hud_height
@@ -162,7 +169,7 @@ class World:
                     )
         self.screen.blit(fire_overlay, self.field_rect.topleft)
 
-    def render_trees(self, tree_grid):
+    def render_trees(self, tree_grid, firebot=None):
         rows, cols = tree_grid.shape
         # colored overlay
         tree_overlay = pygame.Surface(
@@ -173,6 +180,9 @@ class World:
             y = r * self.cell_size
             for c in range(cols):
                 if tree_grid[r, c]:
+                    # Skip if outside sensor radius (when firebot is provided)
+                    if firebot is not None and not self.is_cell_visible(r, c, firebot):
+                        continue
                     x = c * self.cell_size
                     pygame.draw.rect(
                         tree_overlay,
@@ -181,7 +191,7 @@ class World:
                     )
         self.screen.blit(tree_overlay, self.field_rect.topleft)
 
-    def render_tree_sprites(self, tree_grid, rng):
+    def render_tree_sprites(self, tree_grid, rng, firebot=None):
         sprites = [
             pygame.image.load("assets/tree1.png").convert_alpha(),
             pygame.image.load("assets/tree2.png").convert_alpha(),
@@ -204,6 +214,9 @@ class World:
             y = row * self.cell_size
             for col in range(cols):
                 if not tree_grid[row, col]:
+                    continue
+                # Skip if outside sensor radius (when firebot is provided)
+                if firebot is not None and not self.is_cell_visible(row, col, firebot):
                     continue
                 x = col * self.cell_size
 
@@ -235,6 +248,66 @@ class World:
                             x + INSET, y + INSET, cell - 2 * INSET, cell - 2 * INSET
                         ),
                     )
+        self.screen.blit(overlay, self.field_rect.topleft)
+
+    def render_forbidden_zone(self, forbidden_zone, resolution):
+        """Render the forbidden zone (Minkowski-inflated fire) as a semi-transparent overlay.
+
+        Args:
+            forbidden_zone: Boolean grid at subgrid resolution
+            resolution: Number of subcells per cell
+        """
+        overlay = pygame.Surface(self.field_rect.size, pygame.SRCALPHA)
+        subcell_size = self.cell_size / resolution
+        sub_rows, sub_cols = forbidden_zone.shape
+        for r in range(sub_rows):
+            y = r * subcell_size
+            for c in range(sub_cols):
+                if forbidden_zone[r, c]:
+                    x = c * subcell_size
+                    pygame.draw.rect(
+                        overlay,
+                        (*FORBIDDEN_ZONE_COLOR, FORBIDDEN_ZONE_ALPHA),
+                        pygame.Rect(x, y, subcell_size + 1, subcell_size + 1),
+                    )
+        self.screen.blit(overlay, self.field_rect.topleft)
+
+    def render_fireline_path(self, path: list[tuple[float, float, float]], width_cells: float = 2.5):
+        """
+        Render the fireline by stamping shovel lines at each sample point.
+
+        Args:
+            path: List of (x, y, theta) - front position and heading
+            width_cells: Width of the shovel in cells (default 2.5)
+        """
+        if len(path) < 1:
+            return
+
+        # Draw solid lines first, then apply alpha to whole surface
+        overlay = pygame.Surface(self.field_rect.size)
+        overlay.fill((0, 0, 0))  # black background for colorkey
+        overlay.set_colorkey((0, 0, 0))  # black is transparent
+
+        half_width = width_cells * self.cell_size / 2
+        # Line thickness should be thick enough to fill gaps between samples
+        line_thickness = max(3, int(self.cell_size * 0.3))
+
+        # Draw a line (the shovel) at each sample point
+        for x, y, theta in path:
+            sx = x * self.cell_size
+            sy = y * self.cell_size
+
+            # Perpendicular to heading (shovel is perpendicular to travel direction)
+            perp_x = -math.sin(theta) * half_width
+            perp_y = math.cos(theta) * half_width
+
+            left = (sx + perp_x, sy + perp_y)
+            right = (sx - perp_x, sy - perp_y)
+
+            pygame.draw.line(overlay, FIRELINE_PATH_COLOR, left, right, line_thickness)
+
+        # Apply alpha to the entire surface
+        overlay.set_alpha(FIRELINE_PATH_ALPHA)
         self.screen.blit(overlay, self.field_rect.topleft)
 
     def render_weight_heatmap(self, weights, vmax=None):
@@ -311,14 +384,11 @@ class World:
         )
         pg.draw.rect(self.screen, border, cell_rect, 1)
 
-    def draw_hud(self):
-        pygame.draw.rect(self.screen, HUD_BG_COLOR, self.hud_rect)
-        # simple checkbox + label
-        box = self.hud_height - 8
-        x, y = 10, self.hud_rect.top + 4
-        self.toggle_rect = pygame.Rect(x, y, box, box)
-        pygame.draw.rect(self.screen, (40, 40, 40), self.toggle_rect, 1)
-        if self.show_weights:
+    def _draw_checkbox(self, x, y, box, checked, label_text):
+        """Draw a checkbox with label and return its rect."""
+        rect = pygame.Rect(x, y, box, box)
+        pygame.draw.rect(self.screen, (40, 40, 40), rect, 1)
+        if checked:
             pygame.draw.line(
                 self.screen,
                 (40, 40, 40),
@@ -333,11 +403,25 @@ class World:
                 (x + box - 3, y + 3),
                 2,
             )
-        label = self.hud_font.render(
-            f"Weights {'ON' if self.show_weights else 'OFF'}", True, (40, 40, 40)
+        label = self.hud_font.render(label_text, True, (40, 40, 40))
+        self.screen.blit(label, (rect.right + 8, y + (box - label.get_height()) // 2))
+        return rect, rect.right + 8 + label.get_width()
+
+    def draw_hud(self):
+        pygame.draw.rect(self.screen, HUD_BG_COLOR, self.hud_rect)
+        box = self.hud_height - 8
+        y = self.hud_rect.top + 4
+
+        # Weights checkbox
+        x = 10
+        self.toggle_rect, next_x = self._draw_checkbox(
+            x, y, box, self.show_weights, f"Weights {'ON' if self.show_weights else 'OFF'}"
         )
-        self.screen.blit(
-            label, (self.toggle_rect.right + 8, y + (box - label.get_height()) // 2)
+
+        # Forbidden Zone checkbox
+        x = next_x + 20
+        self.forbidden_zone_toggle_rect, _ = self._draw_checkbox(
+            x, y, box, self.show_forbidden_zone, f"Forbidden Zone {'ON' if self.show_forbidden_zone else 'OFF'}"
         )
 
     def handle_event(self, e):
@@ -346,6 +430,8 @@ class World:
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if hasattr(self, "toggle_rect") and self.toggle_rect.collidepoint(e.pos):
                 self.show_weights = not self.show_weights
+            elif hasattr(self, "forbidden_zone_toggle_rect") and self.forbidden_zone_toggle_rect.collidepoint(e.pos):
+                self.show_forbidden_zone = not self.show_forbidden_zone
 
     def load_firebot_sprite(self, path: str = "assets/firebot.png"):
         """Load and scale the firebot sprite."""
@@ -431,3 +517,54 @@ class World:
         cell_y = (screen_y - self.field_rect.top) / self.cell_size
 
         return cell_x, cell_y
+
+    def is_cell_visible(self, row: int, col: int, firebot) -> bool:
+        """Check if a cell is within the firebot's sensor radius."""
+        # Calculate distance from cell center to firebot position
+        cell_center_x = col + 0.5
+        cell_center_y = row + 0.5
+        dx = cell_center_x - firebot.x
+        dy = cell_center_y - firebot.y
+        distance = math.sqrt(dx * dx + dy * dy)
+        return distance <= firebot.sensor_radius
+
+    def render_fog_of_war(self, firebot):
+        """
+        Render fog of war overlay that obscures areas outside the sensor radius.
+        Uses a circular reveal centered on the firebot's position.
+        """
+        overlay = pygame.Surface(self.field_rect.size, pygame.SRCALPHA)
+        cell = self.cell_size
+
+        # Fill with fog color
+        overlay.fill((*FOG_OF_WAR_COLOR, FOG_OF_WAR_ALPHA))
+
+        # Create a circular mask to reveal visible area
+        # Convert firebot position to pixel coordinates (relative to field)
+        center_x = firebot.x * cell
+        center_y = firebot.y * cell
+        radius_px = firebot.sensor_radius * cell
+
+        # Draw a transparent circle to reveal the visible area
+        pygame.draw.circle(
+            overlay,
+            (0, 0, 0, 0),  # Fully transparent
+            (int(center_x), int(center_y)),
+            int(radius_px),
+        )
+
+        self.screen.blit(overlay, self.field_rect.topleft)
+
+    def render_sensor_radius_outline(self, firebot, color=(100, 200, 255), width=2):
+        """Render an outline showing the sensor radius."""
+        center_x = self.field_rect.left + firebot.x * self.cell_size
+        center_y = self.field_rect.top + firebot.y * self.cell_size
+        radius_px = firebot.sensor_radius * self.cell_size
+
+        pygame.draw.circle(
+            self.screen,
+            color,
+            (int(center_x), int(center_y)),
+            int(radius_px),
+            width,
+        )
