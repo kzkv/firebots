@@ -90,7 +90,18 @@ class Firebot:
     def set_target(self, target_x: float, target_y: float):
         """Set a new target position to drive to."""
         self.target = (target_x, target_y)
-        self.state = "rotating"
+
+        # Check if we're already facing roughly the right direction
+        dx = target_x - self.x
+        dy = target_y - self.y
+        target_angle = math.atan2(dy, dx)
+        angle_error = abs(self._normalize_angle(target_angle - self.theta))
+
+        # Only rotate if we're significantly off-heading
+        if angle_error > self.angle_threshold * 2:
+            self.state = "rotating"
+        else:
+            self.state = "driving"
 
     def control_step(self, dt: float):
         """
