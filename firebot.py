@@ -16,12 +16,12 @@ class Firebot:
     """
 
     def __init__(
-        self,
-        x: float,
-        y: float,
-        theta: float = 0.0,
-        sensor_radius: float = 10.0,
-        fire_approach_margin: float = 0.5,
+            self,
+            x: float,
+            y: float,
+            theta: float = 0.0,
+            sensor_radius: float = 10.0,
+            fire_approach_margin: float = 0.5,
     ):
         # Position in cell coordinates (fractional, continuous)
         self.x = x
@@ -39,7 +39,7 @@ class Firebot:
         self.wheel_base = 2.0  # distance between wheels in cells (for diff-drive)
 
         # Velocity limits (cells per second, radians per second)
-        self.max_linear_vel = 5.0  # cells/s
+        self.max_linear_vel = 2.0  # cells/s
         self.max_angular_vel = math.pi  # rad/s (180 deg/s)
 
         # Current velocities
@@ -48,13 +48,13 @@ class Firebot:
 
         # Motion controller state
         self.target = None  # (x, y) target position
-        self.state = "idle"  # "idle", "rotating", "driving", "final_rotate"
+        self.state = "idle"  # "idle", "rotating", "driving"
 
         # Controller gains
         self.k_angular = 3.0  # proportional gain for rotation
         self.k_linear = 2.0  # proportional gain for linear motion
-        self.angle_threshold = 0.05  # rad (~3 deg) - when to stop rotating
-        self.distance_threshold = 0.1  # cells - when to stop driving
+        self.angle_threshold = 0.1  # rad (~6 deg) - when to stop rotating
+        self.distance_threshold = 0.5  # cells - when to consider "arrived"
 
         # Fireline cutting mode
         self.cutting_fireline = True  # when True, record path as fireline
@@ -62,12 +62,9 @@ class Firebot:
         self.fireline_path: list[tuple[float, float, float]] = []
         self._last_fireline_pos: tuple[float, float] | None = None
         self._last_fireline_theta: float | None = None
-        self.fireline_sample_dist = (
-            0.001  # min distance between samples when driving (cells)
-        )
-        self.fireline_sample_angle = (
-            0.1  # min angle change between samples when rotating (radians, ~3 deg)
-        )
+        # FIX: Much more reasonable sample distances
+        self.fireline_sample_dist = 0.3  # min distance between samples (cells)
+        self.fireline_sample_angle = 0.15  # min angle change (~8.5 degrees)
 
     def update(self, dt: float):
         """
@@ -85,10 +82,34 @@ class Firebot:
         self.theta += self.omega * dt
 
         # Normalize theta to [-pi, pi]
-        self.theta = math.atan2(math.sin(self.theta), math.cos(self.theta))
+        self.theta = self._normalize_angle(self.theta)
 
-    def set_target(self, target_x: float, target_y: float):
-        """Set a new target position to drive to."""
+    def set_target(self, target_x: float, target_y: float, force_rotate: bool = False):
+        """
+        Set a new target position to drive to.
+
+        Args:
+            target_x, target_y: Target position in cell coordinates
+            force_rotate: If True, always start in rotating state
+        """
+        # Don't reset state if we're already heading toward a nearby target
+        if self.target is not None and not force_rotate:
+            old_dx = self.target[0] - self.x
+            old_dy = self.target[1] - self.y
+            new_dx = target_x - self.x
+            new_dy = target_y - self.y
+
+            # If new target is roughly in the same direction, just update target
+            # without resetting the state machine
+            if old_dx * old_dx + old_dy * old_dy > 0.01:
+                old_angle = math.atan2(old_dy, old_dx)
+                new_angle = math.atan2(new_dy, new_dx)
+                angle_diff = abs(self._normalize_angle(new_angle - old_angle))
+
+                if angle_diff < 0.3 and self.state == "driving":  # ~17 degrees
+                    self.target = (target_x, target_y)
+                    return
+
         self.target = (target_x, target_y)
 
         # Check if we're already facing roughly the right direction
@@ -97,8 +118,8 @@ class Firebot:
         target_angle = math.atan2(dy, dx)
         angle_error = abs(self._normalize_angle(target_angle - self.theta))
 
-        # Only rotate if we're significantly off-heading
-        if angle_error > self.angle_threshold * 2:
+        # Only rotate first if we're significantly off-heading
+        if angle_error > self.angle_threshold * 3 or force_rotate:
             self.state = "rotating"
         else:
             self.state = "driving"
@@ -106,13 +127,12 @@ class Firebot:
     def control_step(self, dt: float):
         """
         Execute one step of the motion controller.
-        Uses a rotate-then-drive approach:
-        1. Rotate to face target
-        2. Drive straight to target
+        Uses a rotate-then-drive approach with smooth transitions.
         """
         if self.target is None or self.state == "idle":
             self.v = 0.0
             self.omega = 0.0
+            self.update(dt)  # Still update physics
             return
 
         tx, ty = self.target
@@ -125,51 +145,55 @@ class Firebot:
         angle_error = self._normalize_angle(target_angle - self.theta)
 
         if self.state == "rotating":
-            # Sample fireline during rotation
-            self._sample_fireline()
-
             # Rotate to face target
             if abs(angle_error) < self.angle_threshold:
                 self.omega = 0.0
                 self.state = "driving"
-                self._sample_fireline()
+                self._sample_fireline()  # Sample at state transition
             else:
-                # P controller for rotation
+                # P controller for rotation with smooth ramp
                 self.omega = np.clip(
                     self.k_angular * angle_error,
                     -self.max_angular_vel,
                     self.max_angular_vel,
                 )
                 self.v = 0.0
+                self._sample_fireline()
 
         elif self.state == "driving":
-            # Sample fireline while driving
-            self._sample_fireline()
-
             # Check if we've arrived
             if distance < self.distance_threshold:
                 self.v = 0.0
                 self.omega = 0.0
                 self.state = "idle"
                 self.target = None
-                # Final sample at arrival
-                self._sample_fireline()
+                self._sample_fireline()  # Final sample at arrival
+                self.update(dt)  # FIX: Don't skip physics update
                 return
 
-            # Recalculate angle error while driving (small corrections)
-            if abs(angle_error) > self.angle_threshold * 2:
-                # Need to re-rotate if we've drifted too much
+            # If heading is way off, go back to rotating
+            if abs(angle_error) > self.angle_threshold * 4:  # ~24 degrees
                 self.state = "rotating"
+                self._sample_fireline()
+                self.update(dt)
                 return
 
-            # Drive forward with small angular corrections
-            self.v = np.clip(self.k_linear * distance, 0, self.max_linear_vel)
-            # Small heading corrections while driving
+            # Drive forward with proportional angular corrections
+            # Slow down as we approach the target
+            speed_factor = min(1.0, distance / 2.0)  # Ramp down within 2 cells
+            self.v = np.clip(
+                self.k_linear * distance * speed_factor,
+                0,
+                self.max_linear_vel
+            )
+
+            # Smaller heading corrections while driving
             self.omega = np.clip(
                 self.k_angular * 0.5 * angle_error,
                 -self.max_angular_vel * 0.3,
                 self.max_angular_vel * 0.3,
             )
+            self._sample_fireline()
 
         # Update state
         self.update(dt)
@@ -178,9 +202,6 @@ class Firebot:
         """
         Set velocities from differential drive wheel speeds.
         Converts to unicycle model (v, omega).
-
-        v = (v_right + v_left) / 2
-        omega = (v_right - v_left) / wheel_base
         """
         self.v = (v_right + v_left) / 2.0
         self.omega = (v_right - v_left) / self.wheel_base
@@ -190,21 +211,13 @@ class Firebot:
         self.omega = np.clip(self.omega, -self.max_angular_vel, self.max_angular_vel)
 
     def get_wheel_velocities(self) -> tuple[float, float]:
-        """
-        Get differential drive wheel speeds from unicycle model.
-
-        v_left = v - omega * wheel_base / 2
-        v_right = v + omega * wheel_base / 2
-        """
+        """Get differential drive wheel speeds from unicycle model."""
         v_left = self.v - self.omega * self.wheel_base / 2.0
         v_right = self.v + self.omega * self.wheel_base / 2.0
         return v_left, v_right
 
     def get_footprint_cells(self) -> list[tuple[int, int]]:
-        """
-        Get list of (row, col) cells occupied by the robot's 3x3 footprint.
-        Robot center is at (self.x, self.y).
-        """
+        """Get list of (row, col) cells occupied by the robot's 3x3 footprint."""
         cells = []
         cx, cy = int(round(self.x)), int(round(self.y))
         offset = self.size // 2  # 1 for 3x3
@@ -218,6 +231,13 @@ class Firebot:
     def is_moving(self) -> bool:
         """Check if robot is currently moving."""
         return self.state != "idle" or abs(self.v) > 0.01 or abs(self.omega) > 0.01
+
+    def stop(self):
+        """Immediately stop the robot and clear target."""
+        self.v = 0.0
+        self.omega = 0.0
+        self.state = "idle"
+        self.target = None
 
     def _sample_fireline(self):
         """Record front position and heading for fireline if moved or rotated enough."""
@@ -241,10 +261,7 @@ class Firebot:
         # Check angle change from last sample
         angle_diff = abs(self._normalize_angle(self.theta - self._last_fireline_theta))
 
-        if (
-            dist >= self.fireline_sample_dist
-            or angle_diff >= self.fireline_sample_angle
-        ):
+        if dist >= self.fireline_sample_dist or angle_diff >= self.fireline_sample_angle:
             self.fireline_path.append((front[0], front[1], self.theta))
             self._last_fireline_pos = front
             self._last_fireline_theta = self.theta

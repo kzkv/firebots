@@ -26,3 +26,25 @@ def place_trees(cols, rows, count, rng=None):
             tree_grid[r, c] = True  # overlap is fine (remains True)
 
     return tree_grid
+
+
+def clear_robot_start(tree_grid, robot_x, robot_y, robot_size=3, margin=1):
+    """
+    Clear trees from robot starting position.
+
+    Args:
+        tree_grid: Boolean grid of trees (modified in place)
+        robot_x, robot_y: Robot center position
+        robot_size: Robot footprint size (default 3 for 3x3)
+        margin: Extra clearance around robot (default 1 cell)
+    """
+    offset = robot_size // 2 + margin
+    cx, cy = int(round(robot_x)), int(round(robot_y))
+
+    rows, cols = tree_grid.shape
+    r_min = max(0, cy - offset)
+    r_max = min(rows, cy + offset + 1)
+    c_min = max(0, cx - offset)
+    c_max = min(cols, cx + offset + 1)
+
+    tree_grid[r_min:r_max, c_min:c_max] = False
