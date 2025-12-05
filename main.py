@@ -1,12 +1,12 @@
 # Michael Laks & Tom Kazakov
 # RBE 550, Firebots (course project)
-# FIXED VERSION v2 - with dt capping and better replan handling
+# Field D* version with smooth pursuit controller
 
 import pygame
 import numpy as np
 import math
 
-from d_star_lite import DStarLite
+from field_d_star import FieldDStar
 from fire_bitmap import load_fire_bitmap
 from obstacles import place_trees, clear_robot_start
 from planning import (
@@ -22,7 +22,7 @@ from exploration import ExplorationMap
 # Field dimensions: 1 cell = 3 ft
 COLS = 100
 ROWS = 60
-CELL_SIZE = 18
+CELL_SIZE = 20
 TREE_COUNT = 50
 
 # Robot Constants
@@ -32,7 +32,7 @@ ROBOT_Y = ROWS / 2
 # Initialize pygame and world
 rng = np.random.default_rng()
 pygame.init()
-pygame.display.set_caption("Firebots")
+pygame.display.set_caption("Firebots - Field D*")
 world = World(ROWS, COLS, CELL_SIZE)
 
 # Load fire bitmap
@@ -63,9 +63,9 @@ weight_grid = rebuild_weight_grid(fire_grid, fire_distance, exploration.get_know
 finite = weight_grid[np.isfinite(weight_grid)]
 print(f"Weight range: min={finite.min():.1f}, max={finite.max():.1f}")
 
-# Create D* Lite planner
-planner = DStarLite(ROWS, COLS)
-planned_path = []
+# Create Field D* planner
+planner = FieldDStar(ROWS, COLS)
+planned_path = []  # Will contain (x, y) tuples from Field D*
 path_index = 0
 
 # Compute forbidden zone for visualization
@@ -85,89 +85,19 @@ target_pos = None
 path_following_enabled = True
 show_path = True
 
-
-def get_smooth_waypoint(path, robot_x, robot_y, robot_theta, lookahead=3.0):
-    """
-    Get a waypoint along the path using pure pursuit style lookahead.
-    Skips points that are behind the robot.
-
-    Returns (x, y) in cell coordinates and index, or (None, -1) if path is empty.
-    """
-    if not path:
-        return None, -1
-
-    # First, find the first path point that's NOT behind the robot
-    # A point is "behind" if the angle to it differs from robot heading by > 90°
-    start_idx = 0
-    for i, (row, col) in enumerate(path):
-        dx = col - robot_x
-        dy = row - robot_y
-        dist_sq = dx * dx + dy * dy
-
-        # Skip points we're already very close to
-        if dist_sq < 0.5:
-            start_idx = i + 1
-            continue
-
-        # Check if point is in front of robot (within 90° of heading)
-        angle_to_point = math.atan2(dy, dx)
-        angle_diff = abs(math.atan2(math.sin(angle_to_point - robot_theta),
-                                    math.cos(angle_to_point - robot_theta)))
-
-        if angle_diff < math.pi / 2:  # Point is in front
-            start_idx = i
-            break
-        else:
-            start_idx = i + 1  # Skip this point, it's behind us
-
-    # If all points are behind us, just use the last one
-    if start_idx >= len(path):
-        start_idx = len(path) - 1
-
-    # Now find closest point from start_idx onward
-    min_dist = float('inf')
-    closest_idx = start_idx
-
-    for i in range(start_idx, len(path)):
-        row, col = path[i]
-        dx = col - robot_x
-        dy = row - robot_y
-        dist = dx * dx + dy * dy
-        if dist < min_dist:
-            min_dist = dist
-            closest_idx = i
-
-    # Look ahead from the closest point
-    target_idx = closest_idx
-    accumulated_dist = 0.0
-
-    for i in range(closest_idx, len(path) - 1):
-        row1, col1 = path[i]
-        row2, col2 = path[i + 1]
-        segment_dist = ((col2 - col1) ** 2 + (row2 - row1) ** 2) ** 0.5
-        accumulated_dist += segment_dist
-
-        if accumulated_dist >= lookahead:
-            target_idx = i + 1
-            break
-        target_idx = i + 1
-
-    # Clamp to path bounds
-    target_idx = min(target_idx, len(path) - 1)
-
-    row, col = path[target_idx]
-    return (col, row), target_idx  # Return (x, y) and index
-
-
-# Track the last commanded waypoint
-last_waypoint = None
+# Stuck detection
+stuck_check_interval = 0.5  # Check every 0.5 seconds
+stuck_timer = 0.0
+last_stuck_check_pos = None
+stuck_threshold = 0.3  # Must move at least this far
 
 # Main loop
 running = True
+use_smooth_control = True  # Toggle between smooth pursuit and rotate-then-drive
+
 while running:
-    # FIX: Cap dt to prevent huge jumps during expensive computations (like D* Lite)
     raw_dt = world.clock.tick(60) / 1000.0
-    dt = min(raw_dt, 0.05)  # Cap at 50ms (20 fps minimum)
+    dt = min(raw_dt, 0.05)  # Cap dt
 
     # Event handling
     for e in pygame.event.get():
@@ -190,11 +120,14 @@ while running:
 
                     print(f"Planning from {start} to {goal}")
                     planner.initialize(start, goal, weight_grid, exploration.get_known_obstacles())
-                    planner.compute_shortest_path()
-                    planned_path = planner.extract_path()
-                    path_index = 0
-                    last_waypoint = None
-                    print(f"Path has {len(planned_path)} cells")
+                    if planner.compute_shortest_path():
+                        planned_path = planner.extract_path()  # Returns (x, y) tuples
+                        path_index = 0
+                        last_stuck_check_pos = (firebot.x, firebot.y)  # Reset stuck detection
+                        print(f"Smooth path has {len(planned_path)} waypoints")
+                    else:
+                        planned_path = []
+                        print("No path found!")
 
         elif e.type == pygame.KEYDOWN:
             if e.key == pygame.K_w:
@@ -207,12 +140,14 @@ while running:
             elif e.key == pygame.K_m:
                 path_following_enabled = not path_following_enabled
                 print(f"Path following: {path_following_enabled}")
+            elif e.key == pygame.K_c:
+                use_smooth_control = not use_smooth_control
+                print(f"Smooth control: {use_smooth_control}")
             elif e.key == pygame.K_ESCAPE:
                 firebot.stop()
                 planned_path = []
                 path_index = 0
                 target_pos = None
-                last_waypoint = None
                 print("Movement cancelled")
             elif e.key == pygame.K_f:
                 approach_point = find_nearest_fire_approach_point(
@@ -224,87 +159,100 @@ while running:
                     start = (int(firebot.y), int(firebot.x))
                     goal = (int(approach_point[1]), int(approach_point[0]))
                     planner.initialize(start, goal, weight_grid, exploration.get_known_obstacles())
-                    planner.compute_shortest_path()
-                    planned_path = planner.extract_path()
-                    path_index = 0
-                    last_waypoint = None
-                    print(f"Path to fire: {len(planned_path)} cells")
+                    if planner.compute_shortest_path():
+                        planned_path = planner.extract_path()
+                        path_index = 0
+                        print(f"Path to fire: {len(planned_path)} waypoints")
 
     # Path following
     if path_following_enabled and len(planned_path) > 0:
-        # Pass robot theta so we can skip points behind us
-        waypoint, new_index = get_smooth_waypoint(
-            planned_path, firebot.x, firebot.y, firebot.theta, lookahead=3.0
-        )
+        if use_smooth_control:
+            # Pure pursuit - smooth motion without stopping to turn
+            still_going = firebot.pure_pursuit_step(planned_path, dt, lookahead=2.5)
 
-        if waypoint is not None:
-            wx, wy = waypoint
+            if not still_going:
+                print("Path complete!")
+                planned_path = []
+                target_pos = None
+        else:
+            # Original rotate-then-drive behavior using set_target
+            # Find a target point on the path
+            target = None
+            for i, (px, py) in enumerate(planned_path):
+                dx = px - firebot.x
+                dy = py - firebot.y
+                if dx * dx + dy * dy > 4.0:  # 2 cells away
+                    target = (px, py)
+                    break
 
-            if new_index >= len(planned_path) - 1:
-                final_row, final_col = planned_path[-1]
-                dx = final_col - firebot.x
-                dy = final_row - firebot.y
-                dist_to_goal = (dx * dx + dy * dy) ** 0.5
+            if target is None and planned_path:
+                target = planned_path[-1]
 
-                if dist_to_goal < 1.0:
+            if target:
+                firebot.set_target(target[0], target[1])
+
+            firebot.control_step(dt)
+
+            # Check if done
+            if planned_path:
+                goal_x, goal_y = planned_path[-1]
+                dx = goal_x - firebot.x
+                dy = goal_y - firebot.y
+                if dx * dx + dy * dy < 1.0:
                     print("Path complete!")
                     planned_path = []
-                    path_index = 0
                     target_pos = None
-                    last_waypoint = None
-                else:
-                    if last_waypoint != (final_col, final_row):
-                        firebot.set_target(final_col, final_row)
-                        last_waypoint = (final_col, final_row)
-            else:
-                if last_waypoint is None:
-                    firebot.set_target(wx, wy)
-                    last_waypoint = (wx, wy)
-                else:
-                    dx = wx - last_waypoint[0]
-                    dy = wy - last_waypoint[1]
-                    if dx * dx + dy * dy > 4.0:
-                        firebot.set_target(wx, wy)
-                        last_waypoint = (wx, wy)
-
-            path_index = new_index
-
-    # Update robot controller
-    firebot.control_step(dt)
-
-    # Clear target when stopped
-    if not firebot.is_moving() and len(planned_path) == 0:
-        target_pos = None
+                    firebot.stop()
+    else:
+        # No path - just run control step (handles stopping)
+        firebot.control_step(dt)
 
     # Update exploration
     new_obstacles_found = exploration.update(
         firebot.x, firebot.y, firebot.sensor_radius, tree_grid
     )
 
-    # Replan if obstacles discovered
-    if new_obstacles_found:
+    # Stuck detection - check if robot is making progress
+    stuck_timer += dt
+    needs_replan = new_obstacles_found
+
+    if stuck_timer >= stuck_check_interval and len(planned_path) > 0:
+        stuck_timer = 0.0
+
+        if last_stuck_check_pos is not None:
+            dx = firebot.x - last_stuck_check_pos[0]
+            dy = firebot.y - last_stuck_check_pos[1]
+            dist_moved = math.sqrt(dx * dx + dy * dy)
+
+            if dist_moved < stuck_threshold:
+                print(f"Robot stuck! Only moved {dist_moved:.2f} cells. Forcing replan...")
+                needs_replan = True
+
+        last_stuck_check_pos = (firebot.x, firebot.y)
+
+    # Replan if obstacles discovered or robot stuck
+    if needs_replan:
         weight_grid = rebuild_weight_grid(fire_grid, fire_distance, exploration.get_known_obstacles())
 
         if len(planned_path) > 0 and target_pos is not None:
             start = (int(firebot.y), int(firebot.x))
             goal = (int(target_pos[1]), int(target_pos[0]))
             planner.initialize(start, goal, weight_grid, exploration.get_known_obstacles())
-            planner.compute_shortest_path()
-            new_path = planner.extract_path()
-
-            if new_path:
-                planned_path = new_path
-                path_index = 0
-                # DON'T reset last_waypoint unless the path changed dramatically
-                # This prevents the robot from suddenly turning around
-                # The next frame's get_smooth_waypoint will skip behind-points anyway
-                print(f"Replanned: {len(planned_path)} cells")
+            if planner.compute_shortest_path():
+                new_path = planner.extract_path()
+                if new_path:
+                    planned_path = new_path
+                    path_index = 0
+                    last_stuck_check_pos = (firebot.x, firebot.y)  # Reset stuck check
+                    print(f"Replanned: {len(planned_path)} waypoints")
+                else:
+                    print("Replan returned empty path!")
+                    firebot.stop()
+                    planned_path = []
             else:
-                # No path found - stop the robot
                 print("Replan failed - no path!")
                 firebot.stop()
                 planned_path = []
-                path_index = 0
 
     # === Rendering ===
     world.clear()
@@ -323,8 +271,21 @@ while running:
         else:
             world.render_fireline_path(firebot.fireline_path)
 
+    # Render planned path (smooth path is list of (x, y))
     if show_path and len(planned_path) > 0:
-        world.render_path(planned_path)
+        # Convert (x, y) to (row, col) for render_path
+        path_cells = [(int(round(y)), int(round(x))) for x, y in planned_path]
+        world.render_path(path_cells)
+
+        # Also draw the smooth path as a line
+        if len(planned_path) >= 2:
+            points = []
+            for x, y in planned_path:
+                sx = int(world.field_rect.left + x * world.cell_size)
+                sy = int(world.field_rect.top + y * world.cell_size)
+                points.append((sx, sy))
+            if len(points) >= 2:
+                pygame.draw.lines(world.screen, (255, 100, 0), False, points, 2)
 
     world.render_fog_of_war(firebot)
 
@@ -333,7 +294,7 @@ while running:
         world.render_weight_on_hover(weight_grid, decimals=1)
 
     if world.show_arrows:
-        world.render_gradient_arrows(weight_grid, spacing=3)
+        world.render_gradient_arrows(weight_grid, spacing=1)
 
     if world.show_forbidden_zone:
         world.render_forbidden_zone(forbidden_zone, forbidden_zone_res)
