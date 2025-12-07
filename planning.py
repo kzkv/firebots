@@ -1,4 +1,4 @@
-# Planning utilities with tunable cost functions
+# Planning utilities with potential field cost functions
 # RBE 550, Firebots (course project)
 
 import math
@@ -72,6 +72,60 @@ def compute_fire_distance_field(fire_grid: np.ndarray) -> np.ndarray:
     return _chamfer_distance8(fire_grid)
 
 
+def build_fire_potential_field(
+        fire_distance: np.ndarray,
+        ideal_distance: float = 4.0,
+        min_distance: float = 2.0,
+        inner_repulsion: float = 10.0,
+        outer_repulsion: float = 2.0,
+) -> np.ndarray:
+    """
+    Build a potential field cost for fire that creates a "valley" at ideal distance.
+
+    This creates:
+    - Infinite cost if closer than min_distance (hard barrier)
+    - Repulsion (increasing cost) as you get closer to fire
+    - Repulsion (increasing cost) as you get farther from fire
+    - Minimum cost at ideal_distance
+
+    Args:
+        fire_distance: Distance field from fire
+        ideal_distance: The optimal distance from fire (cost = 0 here)
+        min_distance: Closer than this = impassable (inf cost)
+        inner_repulsion: Strength of repulsion for being too close
+        outer_repulsion: Strength of repulsion for being too far
+
+    Returns:
+        Cost grid with potential field around fire
+    """
+    cost = np.zeros_like(fire_distance, dtype=np.float32)
+
+    # Hard barrier - too close is impassable
+    too_close = fire_distance < min_distance
+    cost[too_close] = np.inf
+
+    # Potential field for passable cells
+    passable = ~too_close & np.isfinite(fire_distance)
+
+    # Deviation from ideal distance
+    deviation = fire_distance[passable] - ideal_distance
+
+    # Quadratic potential - different strengths for inner vs outer
+    # Inner: quadratic (strong push away from fire)
+    # Outer: LINEAR (gentle pull toward fire, doesn't overwhelm tree costs)
+    inner_mask = fire_distance[passable] < ideal_distance
+    outer_mask = ~inner_mask
+
+    # Create temporary array for passable costs
+    passable_costs = np.zeros(passable.sum(), dtype=np.float32)
+    passable_costs[inner_mask] = inner_repulsion * (deviation[inner_mask] ** 2)
+    passable_costs[outer_mask] = outer_repulsion * deviation[outer_mask]  # LINEAR not squared
+
+    cost[passable] = passable_costs
+
+    return cost
+
+
 def build_fire_corridor_cost(
         fire_grid: np.ndarray,
         fire_distance: np.ndarray,
@@ -80,21 +134,10 @@ def build_fire_corridor_cost(
         falloff_rate: float = 1.0,
 ) -> np.ndarray:
     """
-    Build cost field for the corridor around fire.
+    Build cost field for the corridor around fire. (Legacy function)
 
     Creates a flat optimal band around fire (cost = 0) that forms a
     contiguous ring the robot can follow to encircle the fire.
-
-    Args:
-        fire_grid: Boolean grid where True = fire cell
-        fire_distance: Distance field from fire (from compute_fire_distance_field)
-        min_distance: Cells closer than this are impassable (inf cost)
-        corridor_width: Width of optimal corridor (cost = 0)
-                       Corridor spans from min_distance to min_distance + corridor_width
-        falloff_rate: How fast cost increases beyond corridor
-
-    Returns:
-        Cost grid with fire corridor penalties
     """
     cost = np.zeros_like(fire_distance, dtype=np.float32)
 
@@ -113,6 +156,48 @@ def build_fire_corridor_cost(
     return cost
 
 
+def build_tree_potential_field(
+        tree_grid: np.ndarray,
+        min_distance: float = 1.5,
+        repulsion_strength: float = 20.0,
+        repulsion_decay: float = 2.0,
+        max_radius: int = 5,
+) -> np.ndarray:
+    """
+    Build a potential field for tree avoidance.
+
+    Creates repulsion that pushes the robot away from trees.
+
+    Args:
+        tree_grid: Boolean grid where True = tree cell
+        min_distance: Cells within this distance = IMPASSABLE (inf)
+        repulsion_strength: Peak repulsion magnitude beyond min_distance
+        repulsion_decay: Decay rate (larger = wider influence)
+        max_radius: Maximum radius of influence (cells)
+
+    Returns:
+        Cost grid with tree repulsion field
+    """
+    rows, cols = tree_grid.shape
+    cost = np.zeros((rows, cols), dtype=np.float32)
+
+    # Distance from tree trunks
+    dist_tree = _chamfer_distance8(tree_grid.astype(bool))
+
+    # Trees and cells within min_distance are impassable
+    cost[dist_tree < min_distance] = np.inf
+
+    # Exponential repulsion falloff beyond min_distance
+    falloff_start = max(min_distance, 0.1)
+    mask = (dist_tree >= falloff_start) & (dist_tree <= max_radius) & np.isfinite(cost)
+
+    # Repulsion: strength * exp(-(d - falloff_start) / decay)
+    repulsion = repulsion_strength * np.exp(-(dist_tree - falloff_start) / max(1e-6, repulsion_decay))
+    cost[mask] += repulsion[mask].astype(cost.dtype)
+
+    return cost
+
+
 def build_tree_cost(
         tree_grid: np.ndarray,
         min_distance: float = 0.0,
@@ -121,102 +206,106 @@ def build_tree_cost(
         trunk_max_radius: int = 3,
 ) -> np.ndarray:
     """
-    Build cost field for tree avoidance.
-
-    Args:
-        tree_grid: Boolean grid where True = tree cell
-        min_distance: Cells within this distance of trees = IMPASSABLE (inf)
-        trunk_scale: Peak penalty magnitude beyond min_distance
-        trunk_tau: Decay rate (smaller = faster falloff, larger = wider berth)
-        trunk_max_radius: Maximum radius of influence around trees (cells)
-
-    Returns:
-        Cost grid with tree penalties (inf at tree cells and within min_distance)
+    Build cost field for tree avoidance. (Legacy function - use build_tree_potential_field)
     """
-    rows, cols = tree_grid.shape
-    cost = np.zeros((rows, cols), dtype=np.float32)
-
-    # Distance from tree trunks (0 at trunks)
-    dist_tree = _chamfer_distance8(tree_grid.astype(bool))
-
-    # Trees and cells within min_distance are impassable
-    cost[dist_tree < min_distance] = np.inf
-
-    # Apply exponential falloff for cells beyond min_distance, within radius
-    falloff_start = max(min_distance, 1.0)  # Start falloff at least 1 cell away
-    mask = (dist_tree >= falloff_start) & (dist_tree <= trunk_max_radius) & np.isfinite(cost)
-
-    # Exponential falloff: penalty = scale * exp(-(d - falloff_start) / tau)
-    penalty = trunk_scale * np.exp(-(dist_tree - falloff_start) / max(1e-6, trunk_tau))
-    cost[mask] += penalty[mask].astype(cost.dtype)
-
-    return cost
+    return build_tree_potential_field(
+        tree_grid,
+        min_distance=min_distance,
+        repulsion_strength=trunk_scale,
+        repulsion_decay=trunk_tau,
+        max_radius=trunk_max_radius,
+    )
 
 
 def rebuild_weight_grid(
         fire_grid: np.ndarray,
         fire_distance: np.ndarray,
         known_trees: np.ndarray,
-        # Base cost
         base_cost: float = 1.0,
-        # Fire corridor params
+        # Fire potential field params
         fire_min_distance: float = 2.0,
-        fire_corridor_width: float = 2.0,
-        fire_falloff_rate: float = 2.0,
-        # Tree avoidance params
-        tree_min_distance: float = 0.0,
-        tree_trunk_scale: float = 10.0,
-        tree_trunk_tau: float = 0.5,
-        tree_trunk_max_radius: int = 3,
+        fire_ideal_distance: float = 4.0,
+        fire_inner_repulsion: float = 10.0,
+        fire_outer_repulsion: float = 2.0,
+        # Legacy fire corridor params (for backwards compatibility)
+        fire_corridor_width: float = None,
+        fire_falloff_rate: float = None,
+        # Tree potential field params
+        tree_min_distance: float = 1.5,
+        tree_repulsion_strength: float = 20.0,
+        tree_repulsion_decay: float = 2.0,
+        tree_max_radius: int = 5,
+        # Legacy tree params (for backwards compatibility)
+        tree_trunk_scale: float = None,
+        tree_trunk_tau: float = None,
+        tree_trunk_max_radius: int = None,
+        # Use potential field or legacy
+        use_potential_field: bool = True,
 ) -> np.ndarray:
     """
-    Build complete weight grid combining fire corridor and tree costs.
+    Build complete weight grid combining fire and tree potential fields.
 
-    Args:
-        fire_grid: Boolean grid where True = fire cell
-        fire_distance: Distance field from fire
-        known_trees: Boolean grid of known tree positions
-
-        base_cost: Baseline traversal cost for all cells
-
-        fire_min_distance: Minimum safe distance from fire (closer = inf)
-        fire_corridor_width: Width of optimal corridor (cost = 0)
-        fire_falloff_rate: Cost increase rate beyond corridor
-
-        tree_min_distance: Minimum safe distance from trees (closer = inf)
-        tree_trunk_scale: Peak avoidance penalty beyond min distance
-        tree_trunk_tau: Tree penalty decay rate (larger = wider berth)
-        tree_trunk_max_radius: Maximum tree influence radius
-
-    Returns:
-        Combined weight grid for path planning
+    The potential field approach creates smooth gradients that guide the robot
+    to the optimal distance from fire while avoiding trees.
     """
     rows, cols = fire_grid.shape
 
     # Start with base cost
     weight = np.full((rows, cols), base_cost, dtype=np.float32)
 
-    # Add fire corridor cost
-    corridor_cost = build_fire_corridor_cost(
-        fire_grid,
-        fire_distance,
-        min_distance=fire_min_distance,
-        corridor_width=fire_corridor_width,
-        falloff_rate=fire_falloff_rate,
-    )
-    weight += corridor_cost
+    if use_potential_field:
+        # New potential field approach
+        fire_cost = build_fire_potential_field(
+            fire_distance,
+            ideal_distance=fire_ideal_distance,
+            min_distance=fire_min_distance,
+            inner_repulsion=fire_inner_repulsion,
+            outer_repulsion=fire_outer_repulsion,
+        )
 
-    # Add tree cost
-    tree_cost = build_tree_cost(
-        known_trees,
-        min_distance=tree_min_distance,
-        trunk_scale=tree_trunk_scale,
-        trunk_tau=tree_trunk_tau,
-        trunk_max_radius=tree_trunk_max_radius,
-    )
+        tree_cost = build_tree_potential_field(
+            known_trees,
+            min_distance=tree_min_distance,
+            repulsion_strength=tree_repulsion_strength,
+            repulsion_decay=tree_repulsion_decay,
+            max_radius=tree_max_radius,
+        )
+
+        # Debug: show cost ranges
+        fire_finite = fire_cost[np.isfinite(fire_cost)]
+        tree_finite = tree_cost[np.isfinite(tree_cost)]
+        if len(fire_finite) > 0 and len(tree_finite) > 0:
+            print(f"  Fire cost range: {fire_finite.min():.1f} - {fire_finite.max():.1f}")
+            print(
+                f"  Tree cost range: {tree_finite.min():.1f} - {tree_finite.max():.1f} (trees found: {known_trees.sum()})")
+    else:
+        # Legacy corridor approach
+        corridor_width = fire_corridor_width if fire_corridor_width is not None else 2.0
+        falloff = fire_falloff_rate if fire_falloff_rate is not None else 1.0
+
+        fire_cost = build_fire_corridor_cost(
+            fire_grid,
+            fire_distance,
+            min_distance=fire_min_distance,
+            corridor_width=corridor_width,
+            falloff_rate=falloff,
+        )
+
+        t_scale = tree_trunk_scale if tree_trunk_scale is not None else tree_repulsion_strength
+        t_tau = tree_trunk_tau if tree_trunk_tau is not None else tree_repulsion_decay
+        t_radius = tree_trunk_max_radius if tree_trunk_max_radius is not None else tree_max_radius
+
+        tree_cost = build_tree_cost(
+            known_trees,
+            min_distance=tree_min_distance,
+            trunk_scale=t_scale,
+            trunk_tau=t_tau,
+            trunk_max_radius=t_radius,
+        )
 
     # Combine: if either is inf, result is inf
-    inf_mask = ~np.isfinite(weight) | ~np.isfinite(tree_cost)
+    inf_mask = ~np.isfinite(weight) | ~np.isfinite(fire_cost) | ~np.isfinite(tree_cost)
+    weight += np.where(np.isfinite(fire_cost), fire_cost, 0)
     weight += np.where(np.isfinite(tree_cost), tree_cost, 0)
     weight[inf_mask] = np.inf
 

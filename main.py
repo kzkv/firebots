@@ -1,14 +1,17 @@
 # Michael Laks & Tom Kazakov
 # RBE 550, Firebots (course project)
 # D* Lite with subcell resolution for tight gap navigation
+# + Sequential Encirclement (simplified)
 
 import math
+from typing import Optional
 
 import numpy as np
 import pygame
 
 from exploration import ExplorationMap
 from d_star_lite import DStarLite
+from encirclement import EncirclementPlanner, EncirclementState
 from fire_bitmap import load_fire_bitmap
 from fire_spread import FireSpread
 from firebot import Firebot
@@ -41,54 +44,51 @@ SPREAD_PACE = 0.5  # Seconds per new cell catching fire
 # --- Cost Grid: Base ---
 BASE_COST = 1.0  # Baseline traversal cost for all cells
 
-# --- Cost Grid: Fire Corridor ---
-FIRE_MIN_DISTANCE = 1.5    # Cells closer than this are impassable (inf cost)
-FIRE_CORRIDOR_WIDTH = 2.0  # Width of optimal corridor (cost = 0)
-                           # Corridor spans: MIN_DISTANCE to MIN_DISTANCE + WIDTH
-FIRE_FALLOFF_RATE = 10.0   # Cost increase per cell BEYOND corridor
+# --- Cost Grid: Fire Potential Field ---
+FIRE_MIN_DISTANCE = 2.0  # Cells closer than this are impassable (inf cost)
+FIRE_IDEAL_DISTANCE = 5.0  # Optimal distance from fire (minimum cost here)
+FIRE_INNER_REPULSION = 10.0  # Repulsion strength for being too close to fire
+FIRE_OUTER_REPULSION = 1.2  # Repulsion strength for being too far from fire
 
-# --- Cost Grid: Tree Avoidance ---
-# NOTE: With subcell planning, we can use smaller min_distance.
-#       The planner can find paths through tight gaps by positioning
-#       the robot center between cell centers.
-TREE_MIN_DISTANCE = 1.5    # Cells within this distance = impassable
-                           # Reduced to allow tight gap navigation
-TREE_TRUNK_SCALE = 50.0    # Peak avoidance penalty beyond min_distance
-TREE_TRUNK_TAU = 2.0       # Decay rate (larger = wider influence)
-TREE_TRUNK_MAX_RADIUS = 5  # Max influence radius
+# --- Cost Grid: Tree Potential Field ---
+TREE_MIN_DISTANCE = 1  # Cells within this distance = impassable
+TREE_REPULSION_STRENGTH = 50.0  # Peak repulsion at min_distance
+TREE_REPULSION_DECAY = 2.0  # Decay rate (larger = wider influence)
+TREE_MAX_RADIUS = 5  # Max influence radius
 
 # --- Path Extraction ---
-PATH_STEP_SIZE = 1.0       # Distance per gradient step (cells)
-PATH_MOMENTUM = 0.6        # Blend with previous direction (0.0 - 1.0)
+PATH_STEP_SIZE = 1.0  # Distance per gradient step (cells)
+PATH_MOMENTUM = 0.6  # Blend with previous direction (0.0 - 1.0)
 PATH_GOAL_TOLERANCE = 1.0  # Distance to goal to consider "arrived" (cells)
 
 # --- Path Smoothing ---
-PATH_SMOOTH_ITERATIONS = 2 # Number of smoothing passes
-PATH_SMOOTH_WEIGHT = 0.5    # Smoothing aggressiveness (0.0 - 1.0)
-                            # Lower = less corner cutting in tight spots
+PATH_SMOOTH_ITERATIONS = 2  # Number of smoothing passes
+PATH_SMOOTH_WEIGHT = 0.5  # Smoothing aggressiveness (0.0 - 1.0)
 
 # --- Pure Pursuit Controller ---
 PURSUIT_LOOKAHEAD = 1  # How far ahead to look on path (cells)
-                         # REDUCED to follow path more closely in tight gaps
 
 # --- D* Lite Planner ---
 HEURISTIC_WEIGHT = 3.0  # Weight on heuristic (goal-directedness)
-                        # 1.0 = optimal paths (may explore wrong direction)
-                        # 2.0+ = more greedy, faster
 
 # --- Planning Resolution (KEY FOR TIGHT GAPS) ---
 PLANNING_RESOLUTION = 1  # Subcells per world cell
-                         # 1 = original cell-based planning
-                         # 2 = half-cell precision (can find paths through 3-cell gaps)
-                         # 4 = quarter-cell precision (expensive but very precise)
 
 # --- Stuck Detection ---
 STUCK_CHECK_INTERVAL = 0.5  # How often to check if stuck (seconds)
-STUCK_THRESHOLD = 0.1       # Minimum distance to move per interval (cells)
-MAX_STUCK_REPLANS = 3       # Max consecutive replan attempts when stuck
+STUCK_THRESHOLD = 0.1  # Minimum distance to move per interval (cells)
+MAX_STUCK_REPLANS = 3  # Max consecutive replan attempts when stuck
 
 # --- Forbidden Zone Visualization ---
 FORBIDDEN_ZONE_RESOLUTION = 4  # Subcells per cell for forbidden zone rendering
+
+# --- Encirclement Parameters ---
+ENCIRCLEMENT_WAYPOINT_SPACING = 20.0  # Target distance between waypoints (cells)
+ENCIRCLEMENT_WAYPOINT_THRESHOLD = 2  # Distance to consider waypoint "reached"
+ENCIRCLEMENT_RELOCATION_RADIUS = 15.0  # Search radius for optimizing waypoint positions
+ENCIRCLEMENT_MIN_SPACING = 10.0  # Minimum allowed distance between waypoints
+ENCIRCLEMENT_MIN_FIRE_DIST = 3.0  # Minimum distance waypoints must be from fire
+ENCIRCLEMENT_MAX_WAYPOINT_COST = 5.0  # Max cost for valid waypoint (rejects positions near obstacles)
 
 
 # =============================================================================
@@ -107,6 +107,31 @@ def extract_path_with_params(planner):
     )
 
 
+def plan_to_current_waypoint(encirclement, planner, weight_grid, known_obstacles, robot_x, robot_y):
+    """
+    Plan a path to the current encirclement waypoint.
+
+    Returns:
+        (target_pos, path, success)
+    """
+    wp = encirclement.get_current_waypoint()
+    if wp is None:
+        return None, [], False
+
+    wx, wy = wp
+    start = (int(robot_y), int(robot_x))
+    goal = (int(wy), int(wx))
+
+    planner.initialize(start, goal, weight_grid, known_obstacles)
+
+    if planner.compute_shortest_path():
+        path = extract_path_with_params(planner)
+        if path and planner.is_path_valid(path):
+            return (wx, wy), path, True
+
+    return None, [], False
+
+
 def build_weights(fire_grid, fire_distance, known_trees):
     """Helper to build weight grid using current parameter settings."""
     return rebuild_weight_grid(
@@ -114,22 +139,25 @@ def build_weights(fire_grid, fire_distance, known_trees):
         fire_distance,
         known_trees,
         base_cost=BASE_COST,
-        # Fire params
+        # Fire potential field params
         fire_min_distance=FIRE_MIN_DISTANCE,
-        fire_corridor_width=FIRE_CORRIDOR_WIDTH,
-        fire_falloff_rate=FIRE_FALLOFF_RATE,
-        # Tree params
+        fire_ideal_distance=FIRE_IDEAL_DISTANCE,
+        fire_inner_repulsion=FIRE_INNER_REPULSION,
+        fire_outer_repulsion=FIRE_OUTER_REPULSION,
+        # Tree potential field params
         tree_min_distance=TREE_MIN_DISTANCE,
-        tree_trunk_scale=TREE_TRUNK_SCALE,
-        tree_trunk_tau=TREE_TRUNK_TAU,
-        tree_trunk_max_radius=TREE_TRUNK_MAX_RADIUS,
+        tree_repulsion_strength=TREE_REPULSION_STRENGTH,
+        tree_repulsion_decay=TREE_REPULSION_DECAY,
+        tree_max_radius=TREE_MAX_RADIUS,
+        # Use new potential field approach
+        use_potential_field=True,
     )
 
 
 # Initialize pygame and world
 rng = np.random.default_rng()
 pygame.init()
-pygame.display.set_caption("Firebots - D* Lite")
+pygame.display.set_caption("Firebots - D* Lite + Encirclement")
 world = World(ROWS, COLS, CELL_SIZE)
 
 # Load fire bitmap (scale=0.5 makes fire half the size, centered)
@@ -164,11 +192,13 @@ weight_grid = build_weights(known_fire_grid, fire_distance, exploration.get_know
 finite = weight_grid[np.isfinite(weight_grid)]
 print(f"Weight range: min={finite.min():.1f}, max={finite.max():.1f}")
 print(f"\n=== Current Parameters ===")
-print(f"Fire: min_dist={FIRE_MIN_DISTANCE}, corridor={FIRE_CORRIDOR_WIDTH}, falloff={FIRE_FALLOFF_RATE}")
-print(f"Tree: min_dist={TREE_MIN_DISTANCE}, scale={TREE_TRUNK_SCALE}, tau={TREE_TRUNK_TAU}")
-print(f"Planning resolution: {PLANNING_RESOLUTION}x (grid: {ROWS*PLANNING_RESOLUTION}x{COLS*PLANNING_RESOLUTION})")
+print(f"Fire potential: min_dist={FIRE_MIN_DISTANCE}, ideal_dist={FIRE_IDEAL_DISTANCE}")
+print(f"Fire repulsion: inner={FIRE_INNER_REPULSION}, outer={FIRE_OUTER_REPULSION}")
+print(f"Tree potential: min_dist={TREE_MIN_DISTANCE}, strength={TREE_REPULSION_STRENGTH}, decay={TREE_REPULSION_DECAY}")
+print(f"Planning resolution: {PLANNING_RESOLUTION}x (grid: {ROWS * PLANNING_RESOLUTION}x{COLS * PLANNING_RESOLUTION})")
 print(f"Pure pursuit lookahead: {PURSUIT_LOOKAHEAD}")
 print(f"D* Lite heuristic_weight: {HEURISTIC_WEIGHT}")
+print(f"Encirclement waypoint spacing: {ENCIRCLEMENT_WAYPOINT_SPACING}")
 print(f"==========================\n")
 
 # Create D* Lite planner with subcell resolution
@@ -179,6 +209,18 @@ planner = DStarLite(
 )
 planned_path = []  # Will contain (x, y) tuples from D* Lite
 path_index = 0
+
+# Create encirclement planner
+encirclement = EncirclementPlanner(
+    ROWS, COLS,
+    robot_size=3,  # 3x3 robot footprint
+    waypoint_spacing=ENCIRCLEMENT_WAYPOINT_SPACING,
+    min_waypoint_spacing=ENCIRCLEMENT_MIN_SPACING,
+    waypoint_reached_threshold=ENCIRCLEMENT_WAYPOINT_THRESHOLD,
+    min_fire_distance=ENCIRCLEMENT_MIN_FIRE_DIST,
+    relocation_search_radius=ENCIRCLEMENT_RELOCATION_RADIUS,
+    max_waypoint_cost=ENCIRCLEMENT_MAX_WAYPOINT_COST,
+)
 
 # Compute forbidden zone for visualization
 forbidden_zone, forbidden_zone_res = compute_fire_forbidden_zone(
@@ -200,6 +242,13 @@ show_path = True
 stuck_timer = 0.0
 last_stuck_check_pos = None
 stuck_replan_count = 0  # Track consecutive stuck replans
+
+# Encirclement state
+encirclement_mode = False  # True when actively encircling
+
+# Verification mode - test if fireline is closed after encirclement
+verification_mode = False
+verification_start_fire_count = 0
 
 # Main loop
 running = True
@@ -229,31 +278,37 @@ while running:
                     world, "fireline_grid_toggle_rect"
             ) and world.fireline_grid_toggle_rect.collidepoint(e.pos):
                 world.show_fireline_grid = not world.show_fireline_grid
+            elif hasattr(
+                    world, "waypoints_toggle_rect"
+            ) and world.waypoints_toggle_rect.collidepoint(e.pos):
+                world.show_waypoints = not world.show_waypoints
             else:
-                cell_pos = world.screen_to_cell(e.pos[0], e.pos[1])
-                if cell_pos is not None:
-                    cx, cy = cell_pos
-                    if 0 <= cx < COLS and 0 <= cy < ROWS:
-                        target_pos = cell_pos
-                        start = (int(firebot.y), int(firebot.x))
-                        goal = (int(cell_pos[1]), int(cell_pos[0]))
+                # Manual click navigation (disabled during encirclement)
+                if not encirclement_mode:
+                    cell_pos = world.screen_to_cell(e.pos[0], e.pos[1])
+                    if cell_pos is not None:
+                        cx, cy = cell_pos
+                        if 0 <= cx < COLS and 0 <= cy < ROWS:
+                            target_pos = cell_pos
+                            start = (int(firebot.y), int(firebot.x))
+                            goal = (int(cell_pos[1]), int(cell_pos[0]))
 
-                        print(f"Click at ({cx:.1f}, {cy:.1f}) -> Planning from {start} to {goal}")
-                        planner.initialize(
-                            start, goal, weight_grid, exploration.get_known_obstacles()
-                        )
-                        if planner.compute_shortest_path():
-                            planned_path = extract_path_with_params(planner)
-                            path_index = 0
-                            last_stuck_check_pos = (firebot.x, firebot.y)
-                            stuck_replan_count = 0
-                            print(f"Path has {len(planned_path)} waypoints")
-                            if planned_path:
-                                end = planned_path[-1]
-                                print(f"Path ends at ({end[0]:.1f}, {end[1]:.1f})")
-                        else:
-                            planned_path = []
-                            print("No path found!")
+                            print(f"Click at ({cx:.1f}, {cy:.1f}) -> Planning from {start} to {goal}")
+                            planner.initialize(
+                                start, goal, weight_grid, exploration.get_known_obstacles()
+                            )
+                            if planner.compute_shortest_path():
+                                planned_path = extract_path_with_params(planner)
+                                path_index = 0
+                                last_stuck_check_pos = (firebot.x, firebot.y)
+                                stuck_replan_count = 0
+                                print(f"Path has {len(planned_path)} waypoints")
+                                if planned_path:
+                                    end = planned_path[-1]
+                                    print(f"Path ends at ({end[0]:.1f}, {end[1]:.1f})")
+                            else:
+                                planned_path = []
+                                print("No path found!")
 
         elif e.type == pygame.KEYDOWN:
             if e.key == pygame.K_w:
@@ -274,8 +329,12 @@ while running:
                 planned_path = []
                 path_index = 0
                 target_pos = None
-                print("Movement cancelled")
+                encirclement_mode = False
+                verification_mode = False
+                encirclement.reset()
+                print("Movement cancelled, encirclement/verification reset")
             elif e.key == pygame.K_f:
+                # Find nearest fire approach point
                 approach_point = find_nearest_fire_approach_point(
                     fire_grid,
                     firebot.x,
@@ -296,6 +355,145 @@ while running:
                         stuck_replan_count = 0
                         print(f"Path to fire: {len(planned_path)} waypoints")
 
+            # === ENCIRCLEMENT START ===
+            elif e.key == pygame.K_e:
+                if encirclement.is_active():
+                    # Already encircling - cancel
+                    encirclement.reset()
+                    encirclement_mode = False
+                    planned_path = []
+                    target_pos = None
+                    firebot.stop()
+                    print("Encirclement cancelled")
+                else:
+                    # Start encirclement
+                    print("\n=== Starting Encirclement ===")
+                    success = encirclement.generate_waypoints(
+                        known_fire_grid,
+                        fire_distance,
+                        weight_grid,
+                        firebot.x,
+                        firebot.y,
+                    )
+                    if success:
+                        encirclement_mode = True
+
+                        # Plan to first waypoint (index 0)
+                        target_pos, planned_path, plan_success = plan_to_current_waypoint(
+                            encirclement,
+                            planner,
+                            weight_grid,
+                            exploration.get_known_obstacles(),
+                            firebot.x,
+                            firebot.y,
+                        )
+
+                        if plan_success:
+                            last_stuck_check_pos = (firebot.x, firebot.y)
+                            stuck_replan_count = 0
+                            print(
+                                f"Planning to waypoint {encirclement.get_current_waypoint_index()}: {len(planned_path)} path points")
+                        else:
+                            print("No path to first waypoint!")
+                            encirclement_mode = False
+                            encirclement.reset()
+                    else:
+                        print("Failed to generate encirclement waypoints!")
+
+            # === MANUAL VERIFICATION ===
+            elif e.key == pygame.K_v:
+                if not verification_mode and not encirclement_mode:
+                    print("\n=== Starting Manual Verification ===")
+                    verification_mode = True
+                    verification_start_fire_count = fire_grid.sum()
+                elif verification_mode:
+                    print("Verification cancelled")
+                    verification_mode = False
+
+    # === Encirclement waypoint management (SIMPLIFIED - SEQUENTIAL) ===
+    if encirclement_mode and encirclement.is_active():
+        current_wp = encirclement.get_current_waypoint()
+
+        if current_wp is not None:
+            # Check if we reached the current waypoint
+            if encirclement.waypoint_reached(firebot.x, firebot.y):
+                wp_idx = encirclement.get_current_waypoint_index()
+                print(f"Reached waypoint {wp_idx}")
+
+                # Mark as visited and move to next
+                has_more = encirclement.advance_waypoint()
+
+                if has_more:
+                    # Plan to next waypoint
+                    target_pos, planned_path, plan_success = plan_to_current_waypoint(
+                        encirclement,
+                        planner,
+                        weight_grid,
+                        exploration.get_known_obstacles(),
+                        firebot.x,
+                        firebot.y,
+                    )
+
+                    if plan_success:
+                        last_stuck_check_pos = (firebot.x, firebot.y)
+                        stuck_replan_count = 0
+                        print(f"Going to waypoint {encirclement.get_current_waypoint_index()}")
+                    else:
+                        # Can't reach this waypoint - skip it
+                        print(f"Can't reach waypoint {encirclement.get_current_waypoint_index()}, skipping")
+                        encirclement.skip_current_waypoint()
+                        # Try next one
+                        target_pos, planned_path, _ = plan_to_current_waypoint(
+                            encirclement,
+                            planner,
+                            weight_grid,
+                            exploration.get_known_obstacles(),
+                            firebot.x,
+                            firebot.y,
+                        )
+                else:
+                    # Encirclement complete
+                    encirclement_mode = False
+                    planned_path = []
+                    target_pos = None
+                    firebot.stop()
+
+            # If we have no path but encirclement is active, try to plan
+            elif len(planned_path) == 0:
+                target_pos, planned_path, plan_success = plan_to_current_waypoint(
+                    encirclement,
+                    planner,
+                    weight_grid,
+                    exploration.get_known_obstacles(),
+                    firebot.x,
+                    firebot.y,
+                )
+
+                if plan_success:
+                    last_stuck_check_pos = (firebot.x, firebot.y)
+                    stuck_replan_count = 0
+                    print(f"Re-planning to waypoint {encirclement.get_current_waypoint_index()}")
+
+        # Handle encirclement completion
+        if encirclement.is_complete():
+            print("\n=== ENCIRCLEMENT COMPLETE! ===")
+            print("Starting fire spread verification...")
+            encirclement_mode = False
+            planned_path = []
+            target_pos = None
+            firebot.stop()
+
+            # Start verification mode
+            verification_mode = True
+            verification_start_fire_count = fire_grid.sum()
+
+        elif encirclement.is_failed():
+            print("\n=== ENCIRCLEMENT FAILED ===")
+            encirclement_mode = False
+            planned_path = []
+            target_pos = None
+            firebot.stop()
+
     # Path following
     if path_following_enabled and len(planned_path) > 0:
         if use_smooth_control:
@@ -305,9 +503,11 @@ while running:
             )
 
             if not still_going:
-                print("Path complete!")
-                planned_path = []
-                target_pos = None
+                if not encirclement_mode:
+                    print("Path complete!")
+                    planned_path = []
+                    target_pos = None
+                # In encirclement mode, waypoint check handles completion
         else:
             # Original rotate-then-drive behavior using set_target
             target = None
@@ -332,10 +532,11 @@ while running:
                 dx = goal_x - firebot.x
                 dy = goal_y - firebot.y
                 if dx * dx + dy * dy < 1.0:
-                    print("Path complete!")
-                    planned_path = []
-                    target_pos = None
-                    firebot.stop()
+                    if not encirclement_mode:
+                        print("Path complete!")
+                        planned_path = []
+                        target_pos = None
+                        firebot.stop()
     else:
         # No path - just run control step (handles stopping)
         firebot.control_step(dt)
@@ -351,7 +552,29 @@ while running:
         )
 
     # Update fire spread simulation
-    fire_spread.update(dt)
+    if not verification_mode:
+        fire_spread.update(dt)
+    else:
+        # Verification mode: spread fire rapidly to test containment
+        # Spread multiple cells per frame for faster verification
+        cells_per_frame = 30  # Spread up to 10 cells per frame
+
+        for _ in range(cells_per_frame):
+            # Try to spread fire
+            spread_happened = fire_spread._ignite_one_neighbor()
+
+            if not spread_happened:
+                # No more cells to spread to - fire is CONTAINED!
+                final_fire_count = fire_grid.sum()
+                print(f"\n{'=' * 50}")
+                print(f"=== FIRELINE VERIFICATION: SUCCESS! ===")
+                print(
+                    f"Fire contained! Started with {verification_start_fire_count} cells, ended with {final_fire_count} cells")
+                print(
+                    f"Fireline held - fire filled {final_fire_count - verification_start_fire_count} cells inside the ring")
+                print(f"{'=' * 50}\n")
+                verification_mode = False
+                break
 
     # === Detect spread fire within sensor range ===
     new_fire_detected = False
@@ -368,6 +591,18 @@ while running:
             fire_distance = compute_fire_distance_field(known_fire_grid)
             weight_grid = build_weights(known_fire_grid, fire_distance, exploration.get_known_obstacles())
             print(f"New fire detected! {visible.sum()} cells discovered")
+
+            # Update encirclement waypoints for new fire
+            if encirclement_mode and encirclement.is_active():
+                _, waypoint_changed = encirclement.update_waypoints_for_new_obstacles(
+                    weight_grid, fire_distance
+                )
+                if waypoint_changed:
+                    # Current waypoint moved - replan
+                    new_wp = encirclement.get_current_waypoint()
+                    if new_wp:
+                        target_pos = new_wp
+                        print(f"Current waypoint relocated to ({new_wp[0]:.1f}, {new_wp[1]:.1f})")
 
     # Update exploration
     new_obstacles_found = exploration.update(
@@ -395,11 +630,35 @@ while running:
                 )
 
                 if stuck_replan_count >= MAX_STUCK_REPLANS:
-                    print("Max stuck replans reached - stopping robot")
-                    firebot.stop()
-                    planned_path = []
-                    target_pos = None
-                    stuck_replan_count = 0
+                    if encirclement_mode:
+                        # Skip this waypoint and try next
+                        print(f"Skipping waypoint {encirclement.get_current_waypoint_index()}")
+                        encirclement.skip_current_waypoint()
+                        stuck_replan_count = 0
+
+                        # Plan to next waypoint
+                        target_pos, planned_path, plan_success = plan_to_current_waypoint(
+                            encirclement,
+                            planner,
+                            weight_grid,
+                            exploration.get_known_obstacles(),
+                            firebot.x,
+                            firebot.y,
+                        )
+
+                        if plan_success:
+                            last_stuck_check_pos = (firebot.x, firebot.y)
+                        elif not encirclement.is_active():
+                            encirclement_mode = False
+                            planned_path = []
+                            target_pos = None
+                            firebot.stop()
+                    else:
+                        print("Max stuck replans reached - stopping robot")
+                        firebot.stop()
+                        planned_path = []
+                        target_pos = None
+                        stuck_replan_count = 0
                 else:
                     needs_replan = True
                     stuck_triggered = True
@@ -415,6 +674,17 @@ while running:
             known_fire_grid, fire_distance, exploration.get_known_obstacles()
         )
 
+        # Update encirclement waypoints for new obstacles
+        if encirclement_mode and encirclement.is_active() and new_obstacles_found:
+            _, waypoint_changed = encirclement.update_waypoints_for_new_obstacles(
+                weight_grid, fire_distance
+            )
+            if waypoint_changed:
+                new_wp = encirclement.get_current_waypoint()
+                if new_wp:
+                    target_pos = new_wp
+
+        # Replan to current target
         start = (int(firebot.y), int(firebot.x))
         goal = (int(target_pos[1]), int(target_pos[0]))
         planner.initialize(
@@ -438,9 +708,10 @@ while running:
             if stuck_triggered:
                 stuck_replan_count += 1
             if stuck_replan_count >= MAX_STUCK_REPLANS:
-                firebot.stop()
-                planned_path = []
-                stuck_replan_count = 0
+                if not encirclement_mode:
+                    firebot.stop()
+                    planned_path = []
+                    stuck_replan_count = 0
 
     # === Rendering ===
     world.clear()
@@ -475,6 +746,19 @@ while running:
             if len(points) >= 2:
                 pygame.draw.lines(world.screen, (255, 100, 0), False, points, 2)
 
+    # Render encirclement corridor cells (for debugging)
+    corridor_cells = encirclement.get_corridor_cells()
+    if corridor_cells and world.show_waypoints:
+        world.render_corridor_cells(corridor_cells, color=(0, 255, 255), alpha=60)
+
+    # Render encirclement waypoints
+    if encirclement.is_active() or encirclement.is_complete():
+        waypoints = encirclement.get_waypoints()
+        states = encirclement.get_waypoint_states()
+        world.render_encirclement_waypoints(
+            waypoints, states, encirclement.get_current_waypoint_index()
+        )
+
     world.render_fog_of_war(firebot)
 
     if world.show_weights:
@@ -494,7 +778,17 @@ while running:
         world.render_target_marker(target_pos[0], target_pos[1])
 
     world.render_firebot(firebot)
-    world.draw_hud()
+
+    # Draw HUD with encirclement/verification state
+    if verification_mode:
+        current_fire = fire_grid.sum()
+        spread = current_fire - verification_start_fire_count
+        hud_state = f"VERIFYING (+{spread} cells)"
+    elif encirclement.state != EncirclementState.IDLE:
+        hud_state = encirclement.state.value
+    else:
+        hud_state = None
+    world.draw_hud(hud_state)
 
     pygame.display.flip()
 

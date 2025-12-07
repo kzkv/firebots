@@ -40,7 +40,7 @@ class Firebot:
         self.wheel_base = 2.0  # distance between wheels in cells (for diff-drive)
 
         # Velocity limits (cells per second, radians per second)
-        self.max_linear_vel = 4.0  # cells/s
+        self.max_linear_vel = 6.0  # cells/s
         self.max_angular_vel = math.pi  # rad/s (180 deg/s)
 
         # Current velocities

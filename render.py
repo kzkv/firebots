@@ -57,6 +57,7 @@ class World:
         self.show_forbidden_zone = False
         self.show_arrows = False
         self.show_fireline_grid = False
+        self.show_waypoints = True  # NEW: Toggle for waypoint visibility
         self.hud_font = pygame.font.SysFont(None, max(12, self.cell_size - 6))
         self.hud_rect = pygame.Rect(
             0, self.field_rect.bottom + self.margin, self.window_width, self.hud_height
@@ -364,7 +365,7 @@ class World:
         self.screen.blit(label, (rect.right + 8, y + (box - label.get_height()) // 2))
         return rect, rect.right + 8 + label.get_width()
 
-    def draw_hud(self):
+    def draw_hud(self, encirclement_state: str = None):
         pygame.draw.rect(self.screen, HUD_BG_COLOR, self.hud_rect)
         box = self.hud_height - 8
         y = self.hud_rect.top + 4
@@ -385,9 +386,26 @@ class World:
         )
 
         x = next_x + 15
-        self.fireline_grid_toggle_rect, _ = self._draw_checkbox(
+        self.fireline_grid_toggle_rect, next_x = self._draw_checkbox(
             x, y, box, self.show_fireline_grid, "Fireline"
         )
+
+        x = next_x + 15
+        self.waypoints_toggle_rect, next_x = self._draw_checkbox(
+            x, y, box, self.show_waypoints, "Waypoints"
+        )
+
+        # Show encirclement state if provided
+        if encirclement_state:
+            state_colors = {
+                "idle": (150, 150, 150),
+                "active": (0, 150, 255),
+                "complete": (0, 200, 0),
+                "failed": (255, 50, 50),
+            }
+            color = state_colors.get(encirclement_state.lower(), (100, 100, 100))
+            state_text = self.hud_font.render(f"Encircle: {encirclement_state.upper()}", True, color)
+            self.screen.blit(state_text, (self.window_width - state_text.get_width() - 10, y + 2))
 
     def handle_event(self, e):
         if e.type == pygame.KEYDOWN and e.key == pygame.K_w:
@@ -397,6 +415,8 @@ class World:
                 self.show_weights = not self.show_weights
             elif hasattr(self, "forbidden_zone_toggle_rect") and self.forbidden_zone_toggle_rect.collidepoint(e.pos):
                 self.show_forbidden_zone = not self.show_forbidden_zone
+            elif hasattr(self, "waypoints_toggle_rect") and self.waypoints_toggle_rect.collidepoint(e.pos):
+                self.show_waypoints = not self.show_waypoints
 
     def load_firebot_sprite(self, path: str = "assets/firebot.png"):
         sprite = pygame.image.load(path).convert_alpha()
@@ -534,6 +554,50 @@ class World:
 
         self.screen.blit(overlay, self.field_rect.topleft)
 
+    def render_tree_repulsion(self, tree_grid, min_distance=1.5, max_radius=5):
+        """
+        Render the tree repulsion zones as colored overlays.
+
+        Args:
+            tree_grid: Boolean grid where True = tree
+            min_distance: Cells within this distance are impassable (red)
+            max_radius: Max radius of repulsion influence (gradient)
+        """
+        if not tree_grid.any():
+            return
+
+        overlay = pygame.Surface(self.field_rect.size, pygame.SRCALPHA)
+        cell = self.cell_size
+
+        # Compute distance from trees
+        from planning import _chamfer_distance8
+        dist_tree = _chamfer_distance8(tree_grid.astype(bool))
+
+        for r in range(self.rows):
+            y = r * cell
+            for c in range(self.cols):
+                d = dist_tree[r, c]
+                x = c * cell
+
+                if d < min_distance:
+                    # Impassable zone - red
+                    pygame.draw.rect(
+                        overlay,
+                        (255, 0, 0, 100),
+                        pygame.Rect(x + 2, y + 2, cell - 4, cell - 4),
+                    )
+                elif d < max_radius:
+                    # Repulsion zone - orange gradient fading out
+                    t = (d - min_distance) / (max_radius - min_distance)
+                    alpha = int(80 * (1 - t))
+                    pygame.draw.rect(
+                        overlay,
+                        (255, 150, 0, alpha),
+                        pygame.Rect(x + 2, y + 2, cell - 4, cell - 4),
+                    )
+
+        self.screen.blit(overlay, self.field_rect.topleft)
+
     def render_gradient_arrows(self, cost_grid, spacing: int = 1):
         arrow_color = (0, 0, 200)
 
@@ -598,3 +662,117 @@ class World:
         if points:
             pygame.draw.circle(self.screen, (0, 200, 0), points[0], 6)  # Start: green
             # Removed red end marker - target_marker shows the actual goal
+
+    def render_encirclement_waypoints(
+        self,
+        waypoints: list[tuple[float, float]],
+        states: list[str],
+        current_idx: int = -1,
+    ):
+        """
+        Render encirclement waypoints with state-based colors.
+
+        Args:
+            waypoints: List of (x, y) waypoint positions
+            states: List of states ("visited", "current", "pending", "skipped")
+            current_idx: Index of current waypoint (for highlighting)
+        """
+        if not waypoints or not self.show_waypoints:
+            return
+
+        # Colors for different states
+        colors = {
+            "visited": (0, 200, 0),      # Green - completed
+            "current": (255, 255, 0),    # Yellow - active target
+            "pending": (100, 150, 255),  # Light blue - upcoming
+            "skipped": (150, 150, 150),  # Gray - skipped
+        }
+
+        # Draw connecting lines first (behind waypoints)
+        if len(waypoints) >= 2:
+            points = []
+            for wx, wy in waypoints:
+                sx = int(self.field_rect.left + wx * self.cell_size)
+                sy = int(self.field_rect.top + wy * self.cell_size)
+                points.append((sx, sy))
+
+            # Draw line connecting all waypoints
+            pygame.draw.lines(self.screen, (100, 100, 200), False, points, 2)
+
+            # Draw closing line if it's a loop (first and last waypoints are same or very close)
+            if len(waypoints) > 2:
+                first = waypoints[0]
+                last = waypoints[-1]
+                dx = first[0] - last[0]
+                dy = first[1] - last[1]
+                if math.sqrt(dx*dx + dy*dy) < 2.0:  # Close enough to be a loop
+                    pygame.draw.line(
+                        self.screen,
+                        (100, 100, 200),
+                        points[-1],
+                        points[0],
+                        2
+                    )
+
+        # Draw waypoint markers
+        for i, (wx, wy) in enumerate(waypoints):
+            sx = int(self.field_rect.left + wx * self.cell_size)
+            sy = int(self.field_rect.top + wy * self.cell_size)
+
+            state = states[i] if i < len(states) else "pending"
+            color = colors.get(state, (200, 200, 200))
+
+            # Size based on state
+            if state == "current":
+                radius = 8
+                # Draw pulsing ring for current waypoint
+                pygame.draw.circle(self.screen, color, (sx, sy), radius + 4, 2)
+            elif state == "visited":
+                radius = 5
+            else:
+                radius = 6
+
+            # Draw filled circle
+            pygame.draw.circle(self.screen, color, (sx, sy), radius)
+
+            # Draw border
+            border_color = (50, 50, 50) if state != "skipped" else (100, 100, 100)
+            pygame.draw.circle(self.screen, border_color, (sx, sy), radius, 1)
+
+            # Draw waypoint number
+            if self.cell_size >= 12:
+                num_text = self.tooltip_font.render(str(i), True, (0, 0, 0))
+                text_rect = num_text.get_rect(center=(sx, sy - radius - 8))
+                self.screen.blit(num_text, text_rect)
+
+    def render_corridor_cells(
+        self,
+        corridor_cells: list[tuple[int, int]],
+        color=(0, 255, 255),
+        alpha=80,
+    ):
+        """
+        Render the corridor cells that were found for encirclement.
+
+        Args:
+            corridor_cells: List of (row, col) positions
+            color: RGB color for corridor cells
+            alpha: Transparency (0-255)
+        """
+        if not corridor_cells:
+            return
+
+        overlay = pygame.Surface(self.field_rect.size, pygame.SRCALPHA)
+        cell = self.cell_size
+
+        for row, col in corridor_cells:
+            if 0 <= row < self.rows and 0 <= col < self.cols:
+                x = col * cell
+                y = row * cell
+                pygame.draw.rect(
+                    overlay,
+                    (*color, alpha),
+                    pygame.Rect(x + 2, y + 2, cell - 4, cell - 4),
+                )
+
+        self.screen.blit(overlay, self.field_rect.topleft)
