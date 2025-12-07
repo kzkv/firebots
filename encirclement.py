@@ -32,16 +32,16 @@ class EncirclementPlanner:
     """
 
     def __init__(
-            self,
-            rows: int,
-            cols: int,
-            robot_size: int = 3,
-            waypoint_spacing: float = 15.0,
-            min_waypoint_spacing: float = 10.0,
-            waypoint_reached_threshold: float = 1.0,
-            min_fire_distance: float = 3.0,
-            relocation_search_radius: float = 10.0,
-            max_waypoint_cost: float = 15.0,
+        self,
+        rows: int,
+        cols: int,
+        robot_size: int = 3,
+        waypoint_spacing: float = 15.0,
+        min_waypoint_spacing: float = 10.0,
+        waypoint_reached_threshold: float = 1.0,
+        min_fire_distance: float = 3.0,
+        relocation_search_radius: float = 10.0,
+        max_waypoint_cost: float = 15.0,
     ):
         """
         Initialize the encirclement planner.
@@ -89,12 +89,12 @@ class EncirclementPlanner:
         self.corridor_cells: list[tuple[int, int]] = []
 
     def generate_waypoints(
-            self,
-            fire_grid: np.ndarray,
-            fire_distance: np.ndarray,
-            weight_grid: np.ndarray,
-            robot_x: float,
-            robot_y: float,
+        self,
+        fire_grid: np.ndarray,
+        fire_distance: np.ndarray,
+        weight_grid: np.ndarray,
+        robot_x: float,
+        robot_y: float,
     ) -> bool:
         """
         Generate waypoints to encircle the fire.
@@ -134,9 +134,7 @@ class EncirclementPlanner:
         self.touches_boundary = self._fire_touches_boundary(fire_grid)
 
         # Find the passable corridor dynamically
-        corridor_cells = self._find_passable_corridor(
-            fire_distance, weight_grid
-        )
+        corridor_cells = self._find_passable_corridor(fire_distance, weight_grid)
 
         if len(corridor_cells) == 0:
             print("Encirclement: No valid corridor cells found!")
@@ -167,7 +165,9 @@ class EncirclementPlanner:
             ordered_contour = ordered_contour[start_idx:] + ordered_contour[:start_idx]
         else:
             # Reverse for counter-clockwise
-            ordered_contour = ordered_contour[start_idx::-1] + ordered_contour[:start_idx:-1]
+            ordered_contour = (
+                ordered_contour[start_idx::-1] + ordered_contour[:start_idx:-1]
+            )
 
         # Sample waypoints with spacing constraints
         raw_waypoints = self._sample_waypoints_with_spacing(
@@ -192,9 +192,13 @@ class EncirclementPlanner:
 
         self.state = EncirclementState.ACTIVE
         print(f"Encirclement: Generated {len(self.waypoints)} waypoints")
-        print(f"  Direction: {'clockwise' if self.going_clockwise else 'counter-clockwise'}")
+        print(
+            f"  Direction: {'clockwise' if self.going_clockwise else 'counter-clockwise'}"
+        )
         print(f"  Boundary: {'touches edge' if self.touches_boundary else 'enclosed'}")
-        print(f"  Min fire distance: {self.min_fire_distance}, Max waypoint cost: {self.max_waypoint_cost}")
+        print(
+            f"  Min fire distance: {self.min_fire_distance}, Max waypoint cost: {self.max_waypoint_cost}"
+        )
 
         return True
 
@@ -212,16 +216,16 @@ class EncirclementPlanner:
         return False
 
     def _find_contour_cells(
-            self,
-            fire_distance: np.ndarray,
-            ideal_distance: float,
-            tolerance: float = 0.5,
+        self,
+        fire_distance: np.ndarray,
+        ideal_distance: float,
+        tolerance: float = 0.5,
     ) -> np.ndarray:
         """Find cells at approximately the ideal distance from fire. (Legacy method)"""
         mask = (
-                (fire_distance >= ideal_distance - tolerance) &
-                (fire_distance <= ideal_distance + tolerance) &
-                np.isfinite(fire_distance)
+            (fire_distance >= ideal_distance - tolerance)
+            & (fire_distance <= ideal_distance + tolerance)
+            & np.isfinite(fire_distance)
         )
         return np.argwhere(mask)
 
@@ -251,9 +255,9 @@ class EncirclementPlanner:
         return True
 
     def _find_passable_corridor(
-            self,
-            fire_distance: np.ndarray,
-            weight_grid: np.ndarray,
+        self,
+        fire_distance: np.ndarray,
+        weight_grid: np.ndarray,
     ) -> np.ndarray:
         """
         Dynamically find the lowest-cost passable ring around fire.
@@ -282,7 +286,7 @@ class EncirclementPlanner:
 
         for angle in angles:
             best_cell = None
-            best_cost = float('inf')
+            best_cost = float("inf")
 
             # Ray march outward from fire centroid
             for dist in np.arange(self.min_fire_distance, max_search_dist, 0.5):
@@ -330,7 +334,9 @@ class EncirclementPlanner:
         # Debug: show cost range of found cells
         if ring_cells:
             costs = [weight_grid[r, c] for r, c in ring_cells]
-            print(f"    Ring cost range: min={min(costs):.1f}, max={max(costs):.1f}, avg={sum(costs) / len(costs):.1f}")
+            print(
+                f"    Ring cost range: min={min(costs):.1f}, max={max(costs):.1f}, avg={sum(costs) / len(costs):.1f}"
+            )
 
         return np.array(ring_cells) if ring_cells else np.array([]).reshape(0, 2)
 
@@ -339,8 +345,8 @@ class EncirclementPlanner:
         return self.corridor_cells
 
     def _order_contour_by_angle(
-            self,
-            contour_cells: np.ndarray,
+        self,
+        contour_cells: np.ndarray,
     ) -> list[tuple[float, float]]:
         """Order contour cells by angle around fire centroid."""
         if self.fire_centroid is None or len(contour_cells) == 0:
@@ -362,8 +368,8 @@ class EncirclementPlanner:
         return [(float(c) + 0.5, float(r) + 0.5) for r, c in ordered]
 
     def _handle_boundary_gaps(
-            self,
-            contour: list[tuple[float, float]],
+        self,
+        contour: list[tuple[float, float]],
     ) -> list[tuple[float, float]]:
         """
         Handle map boundary case by finding angular gaps.
@@ -398,10 +404,10 @@ class EncirclementPlanner:
         return contour
 
     def _find_start_and_direction(
-            self,
-            contour: list[tuple[float, float]],
-            robot_x: float,
-            robot_y: float,
+        self,
+        contour: list[tuple[float, float]],
+        robot_x: float,
+        robot_y: float,
     ) -> tuple[int, bool]:
         """
         Find the starting index (nearest to robot) and optimal direction.
@@ -413,7 +419,7 @@ class EncirclementPlanner:
             return 0, True
 
         # Find nearest contour point to robot
-        min_dist = float('inf')
+        min_dist = float("inf")
         nearest_idx = 0
 
         for i, (x, y) in enumerate(contour):
@@ -446,8 +452,8 @@ class EncirclementPlanner:
         return nearest_idx, going_clockwise
 
     def _sample_waypoints(
-            self,
-            contour: list[tuple[float, float]],
+        self,
+        contour: list[tuple[float, float]],
     ) -> list[tuple[float, float]]:
         """Sample waypoints at regular intervals along the contour. (Legacy method)"""
         if len(contour) < 2:
@@ -478,10 +484,10 @@ class EncirclementPlanner:
         return waypoints
 
     def _sample_waypoints_with_spacing(
-            self,
-            contour: list[tuple[float, float]],
-            weight_grid: np.ndarray,
-            fire_distance: np.ndarray,
+        self,
+        contour: list[tuple[float, float]],
+        weight_grid: np.ndarray,
+        fire_distance: np.ndarray,
     ) -> list[tuple[float, float]]:
         """
         Sample waypoints along contour with proper spacing and validation.
@@ -504,7 +510,9 @@ class EncirclementPlanner:
             row, col = int(y), int(x)
 
             # Validate this position
-            if not self._is_valid_waypoint_position(row, col, weight_grid, fire_distance):
+            if not self._is_valid_waypoint_position(
+                row, col, weight_grid, fire_distance
+            ):
                 continue
 
             # First waypoint - just add it
@@ -527,7 +535,9 @@ class EncirclementPlanner:
             last_x, last_y = contour[-1]
             last_row, last_col = int(last_y), int(last_x)
 
-            if self._is_valid_waypoint_position(last_row, last_col, weight_grid, fire_distance):
+            if self._is_valid_waypoint_position(
+                last_row, last_col, weight_grid, fire_distance
+            ):
                 prev_x, prev_y = waypoints[-1]
                 dx = last_x - prev_x
                 dy = last_y - prev_y
@@ -539,12 +549,12 @@ class EncirclementPlanner:
         return waypoints
 
     def _is_valid_waypoint_position(
-            self,
-            row: int,
-            col: int,
-            weight_grid: np.ndarray,
-            fire_distance: np.ndarray,
-            max_cost: float = None,
+        self,
+        row: int,
+        col: int,
+        weight_grid: np.ndarray,
+        fire_distance: np.ndarray,
+        max_cost: float = None,
     ) -> bool:
         """
         Check if a position is valid for a waypoint.
@@ -588,10 +598,10 @@ class EncirclementPlanner:
         return True
 
     def _validate_waypoints(
-            self,
-            waypoints: list[tuple[float, float]],
-            weight_grid: np.ndarray,
-            fire_distance: np.ndarray,
+        self,
+        waypoints: list[tuple[float, float]],
+        weight_grid: np.ndarray,
+        fire_distance: np.ndarray,
     ) -> list[tuple[float, float]]:
         """
         Validate waypoints and optimize each to lowest-cost nearby position.
@@ -610,16 +620,23 @@ class EncirclementPlanner:
 
             # Find optimal position (lowest cost nearby)
             optimized = self._find_lowest_cost_position(
-                wx, wy, weight_grid, fire_distance,
-                valid_waypoints[-1] if valid_waypoints else None
+                wx,
+                wy,
+                weight_grid,
+                fire_distance,
+                valid_waypoints[-1] if valid_waypoints else None,
             )
 
             if optimized is not None:
                 if optimized != (wx, wy):
-                    print(f"  Waypoint {i} optimized: ({wx:.1f}, {wy:.1f}) -> ({optimized[0]:.1f}, {optimized[1]:.1f})")
+                    print(
+                        f"  Waypoint {i} optimized: ({wx:.1f}, {wy:.1f}) -> ({optimized[0]:.1f}, {optimized[1]:.1f})"
+                    )
                 valid_waypoints.append(optimized)
             else:
-                print(f"  Waypoint {i} skipped: ({wx:.1f}, {wy:.1f}) - no valid position found")
+                print(
+                    f"  Waypoint {i} skipped: ({wx:.1f}, {wy:.1f}) - no valid position found"
+                )
 
         # Enforce minimum spacing between waypoints
         valid_waypoints = self._enforce_minimum_spacing(valid_waypoints)
@@ -627,13 +644,13 @@ class EncirclementPlanner:
         return valid_waypoints
 
     def _find_lowest_cost_position(
-            self,
-            wx: float,
-            wy: float,
-            weight_grid: np.ndarray,
-            fire_distance: np.ndarray,
-            prev_waypoint: Optional[tuple[float, float]],
-            search_radius: int = None,
+        self,
+        wx: float,
+        wy: float,
+        weight_grid: np.ndarray,
+        fire_distance: np.ndarray,
+        prev_waypoint: Optional[tuple[float, float]],
+        search_radius: int = None,
     ) -> Optional[tuple[float, float]]:
         """
         Find the lowest-cost position near the given waypoint.
@@ -648,7 +665,7 @@ class EncirclementPlanner:
             search_radius = int(self.relocation_search_radius)
 
         best_pos = None
-        best_cost = float('inf')
+        best_cost = float("inf")
 
         for dr in range(-search_radius, search_radius + 1):
             for dc in range(-search_radius, search_radius + 1):
@@ -658,7 +675,9 @@ class EncirclementPlanner:
                 row, col = int(ny), int(nx)
 
                 # Use the unified validity check with cost threshold
-                if not self._is_valid_waypoint_position(row, col, weight_grid, fire_distance):
+                if not self._is_valid_waypoint_position(
+                    row, col, weight_grid, fire_distance
+                ):
                     continue
 
                 cell_cost = weight_grid[row, col]
@@ -697,14 +716,16 @@ class EncirclementPlanner:
             actual_cost = weight_grid[row, col]
             if actual_cost > self.max_waypoint_cost:
                 # Even the best position is too costly - reject it
-                print(f"    Best position cost {actual_cost:.1f} exceeds threshold {self.max_waypoint_cost:.1f}")
+                print(
+                    f"    Best position cost {actual_cost:.1f} exceeds threshold {self.max_waypoint_cost:.1f}"
+                )
                 return None
 
         return best_pos
 
     def _enforce_minimum_spacing(
-            self,
-            waypoints: list[tuple[float, float]],
+        self,
+        waypoints: list[tuple[float, float]],
     ) -> list[tuple[float, float]]:
         """
         Remove waypoints that are too close to each other.
@@ -787,7 +808,9 @@ class EncirclementPlanner:
         """Mark the current waypoint as skipped."""
         if self.current_waypoint_idx < len(self.waypoints):
             self.skipped_waypoints.add(self.current_waypoint_idx)
-            print(f"Encirclement: Marking waypoint {self.current_waypoint_idx} as skipped")
+            print(
+                f"Encirclement: Marking waypoint {self.current_waypoint_idx} as skipped"
+            )
 
     def get_unvisited_waypoints(self) -> list[tuple[int, tuple[float, float]]]:
         """Get list of (index, position) for all unvisited, non-skipped waypoints."""
@@ -819,10 +842,15 @@ class EncirclementPlanner:
         n = len(self.waypoints)
 
         # Check if we just completed the return to start
-        if self.returning_to_start and self.current_waypoint_idx == self.start_waypoint_idx:
+        if (
+            self.returning_to_start
+            and self.current_waypoint_idx == self.start_waypoint_idx
+        ):
             coverage = len(self.visited_waypoints) / n
             self.state = EncirclementState.COMPLETE
-            print(f"Encirclement COMPLETE: {coverage * 100:.0f}% coverage, loop closed!")
+            print(
+                f"Encirclement COMPLETE: {coverage * 100:.0f}% coverage, loop closed!"
+            )
             return False
 
         # Move to next waypoint sequentially
@@ -833,12 +861,17 @@ class EncirclementPlanner:
             # Time to return to start
             self.returning_to_start = True
             self.current_waypoint_idx = self.start_waypoint_idx
-            print(f"Returning to start waypoint {self.start_waypoint_idx} to close loop")
+            print(
+                f"Returning to start waypoint {self.start_waypoint_idx} to close loop"
+            )
             return True
 
         # Skip any already visited or skipped waypoints
         while next_idx < n:
-            if next_idx not in self.visited_waypoints and next_idx not in self.skipped_waypoints:
+            if (
+                next_idx not in self.visited_waypoints
+                and next_idx not in self.skipped_waypoints
+            ):
                 break
             next_idx += 1
 
@@ -846,7 +879,9 @@ class EncirclementPlanner:
         if next_idx >= n:
             self.returning_to_start = True
             self.current_waypoint_idx = self.start_waypoint_idx
-            print(f"All waypoints visited, returning to start {self.start_waypoint_idx}")
+            print(
+                f"All waypoints visited, returning to start {self.start_waypoint_idx}"
+            )
             return True
 
         self.current_waypoint_idx = next_idx
@@ -871,7 +906,10 @@ class EncirclementPlanner:
 
         # Skip any visited/skipped
         while next_idx < n:
-            if next_idx not in self.visited_waypoints and next_idx not in self.skipped_waypoints:
+            if (
+                next_idx not in self.visited_waypoints
+                and next_idx not in self.skipped_waypoints
+            ):
                 break
             next_idx += 1
 
@@ -885,9 +923,9 @@ class EncirclementPlanner:
         return True
 
     def update_waypoints_for_new_obstacles(
-            self,
-            weight_grid: np.ndarray,
-            fire_distance: np.ndarray,
+        self,
+        weight_grid: np.ndarray,
+        fire_distance: np.ndarray,
     ) -> tuple[bool, bool]:
         """
         Re-optimize all future waypoints based on updated cost map.
@@ -921,14 +959,17 @@ class EncirclementPlanner:
             if current_valid:
                 current_cost = weight_grid[current_row, current_col]
             else:
-                current_cost = float('inf')
+                current_cost = float("inf")
 
             # If current position is invalid or too costly, must find better spot
-            needs_relocation = not current_valid or current_cost > self.max_waypoint_cost
+            needs_relocation = (
+                not current_valid or current_cost > self.max_waypoint_cost
+            )
 
             if needs_relocation:
                 print(
-                    f"  Waypoint {i} at ({wx:.1f}, {wy:.1f}) needs relocation (cost={current_cost:.1f}, valid={current_valid})")
+                    f"  Waypoint {i} at ({wx:.1f}, {wy:.1f}) needs relocation (cost={current_cost:.1f}, valid={current_valid})"
+                )
 
             # Find the best (lowest cost) position for this waypoint
             optimized = self._find_lowest_cost_position(
@@ -943,7 +984,8 @@ class EncirclementPlanner:
                     # Only report if there's a meaningful change
                     if needs_relocation or new_cost < current_cost - 0.5:
                         print(
-                            f"  Waypoint {i} relocated: ({wx:.1f}, {wy:.1f}) -> ({optimized[0]:.1f}, {optimized[1]:.1f}), cost {current_cost:.1f} -> {new_cost:.1f}")
+                            f"  Waypoint {i} relocated: ({wx:.1f}, {wy:.1f}) -> ({optimized[0]:.1f}, {optimized[1]:.1f}), cost {current_cost:.1f} -> {new_cost:.1f}"
+                        )
                         relocated_count += 1
 
                         # Track if current waypoint changed
@@ -954,7 +996,9 @@ class EncirclementPlanner:
             else:
                 # No valid position found - skip this waypoint
                 self.skipped_waypoints.add(i)
-                print(f"  Waypoint {i} now unreachable (no valid position in search radius), skipping")
+                print(
+                    f"  Waypoint {i} now unreachable (no valid position in search radius), skipping"
+                )
                 skipped_count += 1
 
                 # If current waypoint was skipped, that's also a change
@@ -969,7 +1013,10 @@ class EncirclementPlanner:
 
             # Find previous non-skipped waypoint
             prev_idx = i - 1
-            while prev_idx >= self.current_waypoint_idx and prev_idx in self.skipped_waypoints:
+            while (
+                prev_idx >= self.current_waypoint_idx
+                and prev_idx in self.skipped_waypoints
+            ):
                 prev_idx -= 1
 
             if prev_idx < self.current_waypoint_idx:
@@ -991,17 +1038,19 @@ class EncirclementPlanner:
             skipped_count += spacing_skipped
 
         if relocated_count > 0 or skipped_count > 0:
-            print(f"Encirclement update: {relocated_count} optimized, {skipped_count} skipped")
+            print(
+                f"Encirclement update: {relocated_count} optimized, {skipped_count} skipped"
+            )
 
         return True, current_waypoint_changed
 
     def regenerate_for_fire_spread(
-            self,
-            fire_grid: np.ndarray,
-            fire_distance: np.ndarray,
-            weight_grid: np.ndarray,
-            robot_x: float,
-            robot_y: float,
+        self,
+        fire_grid: np.ndarray,
+        fire_distance: np.ndarray,
+        weight_grid: np.ndarray,
+        robot_x: float,
+        robot_y: float,
     ) -> bool:
         """
         Regenerate waypoints when fire has spread significantly.
@@ -1015,12 +1064,17 @@ class EncirclementPlanner:
 
         # Regenerate waypoints
         success = self.generate_waypoints(
-            fire_grid, fire_distance, weight_grid,
-            robot_x, robot_y,
+            fire_grid,
+            fire_distance,
+            weight_grid,
+            robot_x,
+            robot_y,
         )
 
         if success:
-            print(f"Encirclement: Regenerated waypoints (was at {progress}/{len(self.waypoints)})")
+            print(
+                f"Encirclement: Regenerated waypoints (was at {progress}/{len(self.waypoints)})"
+            )
 
         return success
 

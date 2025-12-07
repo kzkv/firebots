@@ -9,6 +9,7 @@
 
 import heapq
 import math
+
 import numpy as np
 
 
@@ -20,12 +21,12 @@ class DStarLite:
     """
 
     def __init__(
-            self,
-            rows: int,
-            cols: int,
-            robot_size: int = 3,
-            heuristic_weight: float = 1.0,
-            planning_resolution: int = 2,
+        self,
+        rows: int,
+        cols: int,
+        robot_size: int = 3,
+        heuristic_weight: float = 1.0,
+        planning_resolution: int = 2,
     ):
         self.world_rows = rows
         self.world_cols = cols
@@ -43,10 +44,14 @@ class DStarLite:
         base_cost = self.scale  # Movement cost scaled for finer grid
         diag_cost = self.scale * 1.41421356237
         self.neighbors = (
-            (-1, 0, base_cost), (1, 0, base_cost),
-            (0, -1, base_cost), (0, 1, base_cost),
-            (-1, -1, diag_cost), (-1, 1, diag_cost),
-            (1, -1, diag_cost), (1, 1, diag_cost),
+            (-1, 0, base_cost),
+            (1, 0, base_cost),
+            (0, -1, base_cost),
+            (0, 1, base_cost),
+            (-1, -1, diag_cost),
+            (-1, 1, diag_cost),
+            (1, -1, diag_cost),
+            (1, 1, diag_cost),
         )
 
         self.SQRT2 = math.sqrt(2.0)
@@ -76,7 +81,9 @@ class DStarLite:
         pc = world_col * self.resolution + self.resolution // 2
         return (pr, pc)
 
-    def _planning_to_world_float(self, plan_row: int, plan_col: int) -> tuple[float, float]:
+    def _planning_to_world_float(
+        self, plan_row: int, plan_col: int
+    ) -> tuple[float, float]:
         """Convert planning grid cell to world coordinates (continuous)."""
         world_x = (plan_col + 0.5) * self.scale
         world_y = (plan_row + 0.5) * self.scale
@@ -126,7 +133,9 @@ class DStarLite:
                 check_col_safe = np.clip(check_col, 0, self.world_cols - 1)
 
                 # Check if this footprint cell hits an obstacle
-                footprint_blocked = ~np.isfinite(cost_grid[check_row_safe, check_col_safe])
+                footprint_blocked = ~np.isfinite(
+                    cost_grid[check_row_safe, check_col_safe]
+                )
                 self.passable[footprint_blocked] = False
 
         # Allow cells near start to be passable (escape from tight spots)
@@ -137,7 +146,9 @@ class DStarLite:
                     nr, nc = sr + dr, sc + dc
                     if 0 <= nr < self.rows and 0 <= nc < self.cols:
                         # Only allow if not completely blocked
-                        wr, wc = int((nc + 0.5) * self.scale), int((nr + 0.5) * self.scale)
+                        wr, wc = int((nc + 0.5) * self.scale), int(
+                            (nr + 0.5) * self.scale
+                        )
                         if 0 <= wr < self.world_rows and 0 <= wc < self.world_cols:
                             self.passable[nr, nc] = True
 
@@ -162,8 +173,13 @@ class DStarLite:
         # Sample cost grid
         self.plan_cost = cost_grid[world_row][:, world_col].astype(np.float32)
 
-    def initialize(self, start: tuple, goal: tuple, cost_grid: np.ndarray,
-                   obstacle_grid: np.ndarray = None):
+    def initialize(
+        self,
+        start: tuple,
+        goal: tuple,
+        cost_grid: np.ndarray,
+        obstacle_grid: np.ndarray = None,
+    ):
         """
         Initialize planner with precomputed grids for fast planning.
         """
@@ -269,7 +285,7 @@ class DStarLite:
                             if not passable[nr, nc]:
                                 rhs[nr, nc] = np.inf
                             else:
-                                min_rhs = float('inf')
+                                min_rhs = float("inf")
                                 for dr2, dc2, mc2 in neighbors:
                                     nnr, nnc = nr + dr2, nc + dc2
                                     if 0 <= nnr < rows and 0 <= nnc < cols:
@@ -304,12 +320,12 @@ class DStarLite:
                     if 0 <= nr < rows and 0 <= nc < cols:
                         cells_to_update.append((nr, nc))
 
-                for (ur, uc) in cells_to_update:
+                for ur, uc in cells_to_update:
                     if (ur, uc) != (gr, gc):
                         if not passable[ur, uc]:
                             rhs[ur, uc] = np.inf
                         else:
-                            min_rhs = float('inf')
+                            min_rhs = float("inf")
                             for dr2, dc2, mc2 in neighbors:
                                 nnr, nnc = ur + dr2, uc + dc2
                                 if 0 <= nnr < rows and 0 <= nnc < cols:
@@ -336,16 +352,18 @@ class DStarLite:
 
         path_exists = np.isfinite(g[sr, sc])
         if iterations > 1000:
-            print(f"D* Lite: {iterations} iters, path={'found' if path_exists else 'NONE'}")
+            print(
+                f"D* Lite: {iterations} iters, path={'found' if path_exists else 'NONE'}"
+            )
         return path_exists
 
     def extract_path(
-            self,
-            smooth_iterations: int = 1,
-            smooth_weight: float = 0.2,
-            step_size: float = 1.0,
-            momentum: float = 0.3,
-            goal_tolerance: float = 1.0,
+        self,
+        smooth_iterations: int = 1,
+        smooth_weight: float = 0.2,
+        step_size: float = 1.0,
+        momentum: float = 0.3,
+        goal_tolerance: float = 1.0,
     ) -> list[tuple[float, float]]:
         """Extract optimal path in world coordinates."""
         if self.start is None or self.goal is None:
@@ -391,7 +409,7 @@ class DStarLite:
 
             row, col = current
             best_next = None
-            best_g = float('inf')
+            best_g = float("inf")
 
             for dr, dc, _ in neighbors:
                 nr, nc = row + dr, col + dc
@@ -417,7 +435,9 @@ class DStarLite:
 
         return path
 
-    def _smooth_path(self, path: list, iterations: int = 1, weight: float = 0.2) -> list:
+    def _smooth_path(
+        self, path: list, iterations: int = 1, weight: float = 0.2
+    ) -> list:
         """Smooth path while checking passability."""
         if len(path) <= 2:
             return path
@@ -452,7 +472,9 @@ class DStarLite:
 
         return smoothed
 
-    def is_path_valid(self, path: list[tuple[float, float]], max_segment_length: float = 5.0) -> bool:
+    def is_path_valid(
+        self, path: list[tuple[float, float]], max_segment_length: float = 5.0
+    ) -> bool:
         """Check if a path is reasonable."""
         if len(path) < 2:
             return len(path) == 1
@@ -500,7 +522,11 @@ class DStarLite:
         """Update start position for incremental replanning."""
         new_start_planning = self._world_to_planning(new_start[0], new_start[1])
         if self.start:
-            self.km += self._heuristic(self.start[0], self.start[1],
-                                       new_start_planning[0], new_start_planning[1])
+            self.km += self._heuristic(
+                self.start[0],
+                self.start[1],
+                new_start_planning[0],
+                new_start_planning[1],
+            )
         self.start = new_start_planning
         self.start_world = new_start

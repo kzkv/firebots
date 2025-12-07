@@ -273,7 +273,9 @@ class World:
                     )
         self.screen.blit(overlay, self.field_rect.topleft)
 
-    def render_fireline_path(self, path: list[tuple[float, float, float]], width_cells: float = 2.5):
+    def render_fireline_path(
+        self, path: list[tuple[float, float, float]], width_cells: float = 2.5
+    ):
         if len(path) < 1:
             return
 
@@ -426,8 +428,12 @@ class World:
                 "failed": (255, 50, 50),
             }
             color = state_colors.get(encirclement_state.lower(), (100, 100, 100))
-            state_text = self.hud_font.render(f"Encircle: {encirclement_state.upper()}", True, color)
-            self.screen.blit(state_text, (self.window_width - state_text.get_width() - 10, y + 2))
+            state_text = self.hud_font.render(
+                f"Encircle: {encirclement_state.upper()}", True, color
+            )
+            self.screen.blit(
+                state_text, (self.window_width - state_text.get_width() - 10, y + 2)
+            )
 
     def handle_event(self, e):
         if e.type == pygame.KEYDOWN and e.key == pygame.K_w:
@@ -435,9 +441,13 @@ class World:
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if hasattr(self, "toggle_rect") and self.toggle_rect.collidepoint(e.pos):
                 self.show_weights = not self.show_weights
-            elif hasattr(self, "forbidden_zone_toggle_rect") and self.forbidden_zone_toggle_rect.collidepoint(e.pos):
+            elif hasattr(
+                self, "forbidden_zone_toggle_rect"
+            ) and self.forbidden_zone_toggle_rect.collidepoint(e.pos):
                 self.show_forbidden_zone = not self.show_forbidden_zone
-            elif hasattr(self, "waypoints_toggle_rect") and self.waypoints_toggle_rect.collidepoint(e.pos):
+            elif hasattr(
+                self, "waypoints_toggle_rect"
+            ) and self.waypoints_toggle_rect.collidepoint(e.pos):
                 self.show_waypoints = not self.show_waypoints
 
     def load_firebot_sprite(self, path: str = "assets/firebot.png"):
@@ -593,6 +603,7 @@ class World:
 
         # Compute distance from trees
         from planning import _chamfer_distance8
+
         dist_tree = _chamfer_distance8(tree_grid.astype(bool))
 
         for r in range(self.rows):
@@ -629,15 +640,31 @@ class World:
                 if not np.isfinite(center_cost):
                     continue
 
-                left = cost_grid[row, col - 1] if np.isfinite(cost_grid[row, col - 1]) else center_cost + 10
-                right = cost_grid[row, col + 1] if np.isfinite(cost_grid[row, col + 1]) else center_cost + 10
-                up = cost_grid[row - 1, col] if np.isfinite(cost_grid[row - 1, col]) else center_cost + 10
-                down = cost_grid[row + 1, col] if np.isfinite(cost_grid[row + 1, col]) else center_cost + 10
+                left = (
+                    cost_grid[row, col - 1]
+                    if np.isfinite(cost_grid[row, col - 1])
+                    else center_cost + 10
+                )
+                right = (
+                    cost_grid[row, col + 1]
+                    if np.isfinite(cost_grid[row, col + 1])
+                    else center_cost + 10
+                )
+                up = (
+                    cost_grid[row - 1, col]
+                    if np.isfinite(cost_grid[row - 1, col])
+                    else center_cost + 10
+                )
+                down = (
+                    cost_grid[row + 1, col]
+                    if np.isfinite(cost_grid[row + 1, col])
+                    else center_cost + 10
+                )
 
                 grad_x = -(right - left) / 2.0
                 grad_y = -(down - up) / 2.0
 
-                mag = math.sqrt(grad_x ** 2 + grad_y ** 2)
+                mag = math.sqrt(grad_x**2 + grad_y**2)
                 if mag < 0.01:
                     continue
 
@@ -645,26 +672,40 @@ class World:
                 grad_y /= mag
                 arrow_len = self.cell_size * 1.5
 
-                start_x = int(self.field_rect.left + col * self.cell_size + self.cell_size // 2)
-                start_y = int(self.field_rect.top + row * self.cell_size + self.cell_size // 2)
+                start_x = int(
+                    self.field_rect.left + col * self.cell_size + self.cell_size // 2
+                )
+                start_y = int(
+                    self.field_rect.top + row * self.cell_size + self.cell_size // 2
+                )
                 end_x = int(start_x + grad_x * arrow_len)
                 end_y = int(start_y + grad_y * arrow_len)
 
-                pygame.draw.line(self.screen, arrow_color, (start_x, start_y), (end_x, end_y), 2)
+                pygame.draw.line(
+                    self.screen, arrow_color, (start_x, start_y), (end_x, end_y), 2
+                )
 
                 angle = math.atan2(grad_y, grad_x)
                 head_len = 5
                 pygame.draw.line(
-                    self.screen, arrow_color,
+                    self.screen,
+                    arrow_color,
                     (end_x, end_y),
-                    (int(end_x - head_len * math.cos(angle - 0.5)), int(end_y - head_len * math.sin(angle - 0.5))),
-                    2
+                    (
+                        int(end_x - head_len * math.cos(angle - 0.5)),
+                        int(end_y - head_len * math.sin(angle - 0.5)),
+                    ),
+                    2,
                 )
                 pygame.draw.line(
-                    self.screen, arrow_color,
+                    self.screen,
+                    arrow_color,
                     (end_x, end_y),
-                    (int(end_x - head_len * math.cos(angle + 0.5)), int(end_y - head_len * math.sin(angle + 0.5))),
-                    2
+                    (
+                        int(end_x - head_len * math.cos(angle + 0.5)),
+                        int(end_y - head_len * math.sin(angle + 0.5)),
+                    ),
+                    2,
                 )
 
     def render_path(self, path: list[tuple[int, int]], color=(0, 100, 255), width=3):
@@ -704,8 +745,8 @@ class World:
 
         # Colors for different states
         colors = {
-            "visited": (0, 200, 0),      # Green - completed
-            "current": (255, 255, 0),    # Yellow - active target
+            "visited": (0, 200, 0),  # Green - completed
+            "current": (255, 255, 0),  # Yellow - active target
             "pending": (100, 150, 255),  # Light blue - upcoming
             "skipped": (150, 150, 150),  # Gray - skipped
         }
@@ -727,13 +768,9 @@ class World:
                 last = waypoints[-1]
                 dx = first[0] - last[0]
                 dy = first[1] - last[1]
-                if math.sqrt(dx*dx + dy*dy) < 2.0:  # Close enough to be a loop
+                if math.sqrt(dx * dx + dy * dy) < 2.0:  # Close enough to be a loop
                     pygame.draw.line(
-                        self.screen,
-                        (100, 100, 200),
-                        points[-1],
-                        points[0],
-                        2
+                        self.screen, (100, 100, 200), points[-1], points[0], 2
                     )
 
         # Draw waypoint markers

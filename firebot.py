@@ -3,6 +3,7 @@
 # Clean pure pursuit without oscillation-prone repulsion
 
 import math
+
 import numpy as np
 
 
@@ -17,12 +18,12 @@ class Firebot:
     """
 
     def __init__(
-            self,
-            x: float,
-            y: float,
-            theta: float = 0.0,
-            sensor_radius: float = 10.0,
-            fire_approach_margin: float = 0.5,
+        self,
+        x: float,
+        y: float,
+        theta: float = 0.0,
+        sensor_radius: float = 10.0,
+        fire_approach_margin: float = 0.5,
     ):
         # Position in cell coordinates (fractional, continuous)
         self.x = x
@@ -119,7 +120,9 @@ class Firebot:
         else:
             self.state = "driving"
 
-    def pure_pursuit_step(self, path: list[tuple[float, float]], dt: float, lookahead: float = 2.0):
+    def pure_pursuit_step(
+        self, path: list[tuple[float, float]], dt: float, lookahead: float = 2.0
+    ):
         """
         Pure pursuit controller for smooth path following.
 
@@ -142,7 +145,7 @@ class Firebot:
             return False
 
         # Find closest point on path, skipping points behind us
-        min_dist_sq = float('inf')
+        min_dist_sq = float("inf")
         closest_idx = 0
 
         for i, (px, py) in enumerate(path):
@@ -271,9 +274,7 @@ class Firebot:
 
             speed_factor = min(1.0, distance / 2.0)
             self.v = np.clip(
-                self.k_linear * distance * speed_factor,
-                0,
-                self.max_linear_vel
+                self.k_linear * distance * speed_factor, 0, self.max_linear_vel
             )
 
             self.omega = np.clip(
@@ -339,7 +340,10 @@ class Firebot:
 
         angle_diff = abs(self._normalize_angle(self.theta - self._last_fireline_theta))
 
-        if dist >= self.fireline_sample_dist or angle_diff >= self.fireline_sample_angle:
+        if (
+            dist >= self.fireline_sample_dist
+            or angle_diff >= self.fireline_sample_angle
+        ):
             self.fireline_path.append((front[0], front[1], self.theta))
             self._last_fireline_pos = front
             self._last_fireline_theta = self.theta

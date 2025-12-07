@@ -7,6 +7,7 @@
 
 import heapq
 import math
+
 import numpy as np
 
 
@@ -23,9 +24,14 @@ class FieldDStar:
 
         # 8-connected neighbors: (dr, dc, cost)
         self.neighbors = (
-            (-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
-            (-1, -1, 1.41421356237), (-1, 1, 1.41421356237),
-            (1, -1, 1.41421356237), (1, 1, 1.41421356237),
+            (-1, 0, 1.0),
+            (1, 0, 1.0),
+            (0, -1, 1.0),
+            (0, 1, 1.0),
+            (-1, -1, 1.41421356237),
+            (-1, 1, 1.41421356237),
+            (1, -1, 1.41421356237),
+            (1, 1, 1.41421356237),
         )
 
         # Precompute footprint offsets once
@@ -83,7 +89,12 @@ class FieldDStar:
 
         offset = self.robot_offset
 
-        if row < offset or row >= self.rows - offset or col < offset or col >= self.cols - offset:
+        if (
+            row < offset
+            or row >= self.rows - offset
+            or col < offset
+            or col >= self.cols - offset
+        ):
             self.passable_cache[row, col] = 0
             return False
 
@@ -113,7 +124,9 @@ class FieldDStar:
                 nr, nc = row + dr, col + dc
                 if 0 <= nr < self.rows and 0 <= nc < self.cols:
                     if self._is_passable(nr, nc):
-                        total = self.g[nr, nc] + self._edge_cost(row, col, nr, nc, move_cost)
+                        total = self.g[nr, nc] + self._edge_cost(
+                            row, col, nr, nc, move_cost
+                        )
                         if total < min_rhs:
                             min_rhs = total
             self.rhs[row, col] = min_rhs
@@ -125,8 +138,13 @@ class FieldDStar:
             heapq.heappush(self.open_list, (key, (row, col)))
             self.open_set.add((row, col))
 
-    def initialize(self, start: tuple, goal: tuple, cost_grid: np.ndarray,
-                   obstacle_grid: np.ndarray = None):
+    def initialize(
+        self,
+        start: tuple,
+        goal: tuple,
+        cost_grid: np.ndarray,
+        obstacle_grid: np.ndarray = None,
+    ):
         """Initialize planner."""
         self.reset()
         self.start = start
@@ -183,7 +201,9 @@ class FieldDStar:
                         self._update_vertex(nr, nc)
 
         path_exists = np.isfinite(self.g[sr, sc])
-        print(f"Field D*: {iterations} iterations, path={'found' if path_exists else 'NOT FOUND'}")
+        print(
+            f"Field D*: {iterations} iterations, path={'found' if path_exists else 'NOT FOUND'}"
+        )
         return path_exists
 
     def _get_g_safe(self, row, col) -> float:
@@ -312,7 +332,9 @@ class FieldDStar:
 
         return path
 
-    def _smooth_path(self, path: list, iterations: int = 2, weight: float = 0.3) -> list:
+    def _smooth_path(
+        self, path: list, iterations: int = 2, weight: float = 0.3
+    ) -> list:
         """
         Smooth path using weighted average with neighbors.
         Keeps first and last points fixed.
@@ -367,6 +389,7 @@ class FieldDStar:
     def update_start(self, new_start: tuple):
         """Update start position for incremental replanning."""
         if self.start:
-            self.km += self._heuristic(self.start[0], self.start[1],
-                                       new_start[0], new_start[1])
+            self.km += self._heuristic(
+                self.start[0], self.start[1], new_start[0], new_start[1]
+            )
         self.start = new_start

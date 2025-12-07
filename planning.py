@@ -2,6 +2,7 @@
 # RBE 550, Firebots (course project)
 
 import math
+
 import numpy as np
 
 
@@ -31,7 +32,7 @@ def _chamfer_distance8(seeds: np.ndarray) -> np.ndarray:
     """≈Euclidean distance transform (8-neighbor, weights 1 / √2)."""
     H, W = seeds.shape
     INF = 1e9
-    SQ2 = 2 ** 0.5
+    SQ2 = 2**0.5
     d = np.where(seeds, 0.0, INF).astype(np.float32)
 
     # forward pass
@@ -73,11 +74,11 @@ def compute_fire_distance_field(fire_grid: np.ndarray) -> np.ndarray:
 
 
 def build_fire_potential_field(
-        fire_distance: np.ndarray,
-        ideal_distance: float = 4.0,
-        min_distance: float = 2.0,
-        inner_repulsion: float = 10.0,
-        outer_repulsion: float = 2.0,
+    fire_distance: np.ndarray,
+    ideal_distance: float = 4.0,
+    min_distance: float = 2.0,
+    inner_repulsion: float = 10.0,
+    outer_repulsion: float = 2.0,
 ) -> np.ndarray:
     """
     Build a potential field cost for fire that creates a "valley" at ideal distance.
@@ -119,7 +120,9 @@ def build_fire_potential_field(
     # Create temporary array for passable costs
     passable_costs = np.zeros(passable.sum(), dtype=np.float32)
     passable_costs[inner_mask] = inner_repulsion * (deviation[inner_mask] ** 2)
-    passable_costs[outer_mask] = outer_repulsion * deviation[outer_mask]  # LINEAR not squared
+    passable_costs[outer_mask] = (
+        outer_repulsion * deviation[outer_mask]
+    )  # LINEAR not squared
 
     cost[passable] = passable_costs
 
@@ -127,11 +130,11 @@ def build_fire_potential_field(
 
 
 def build_fire_corridor_cost(
-        fire_grid: np.ndarray,
-        fire_distance: np.ndarray,
-        min_distance: float = 2.0,
-        corridor_width: float = 2.0,
-        falloff_rate: float = 1.0,
+    fire_grid: np.ndarray,
+    fire_distance: np.ndarray,
+    min_distance: float = 2.0,
+    corridor_width: float = 2.0,
+    falloff_rate: float = 1.0,
 ) -> np.ndarray:
     """
     Build cost field for the corridor around fire. (Legacy function)
@@ -157,11 +160,11 @@ def build_fire_corridor_cost(
 
 
 def build_tree_potential_field(
-        tree_grid: np.ndarray,
-        min_distance: float = 1.5,
-        repulsion_strength: float = 20.0,
-        repulsion_decay: float = 2.0,
-        max_radius: int = 5,
+    tree_grid: np.ndarray,
+    min_distance: float = 1.5,
+    repulsion_strength: float = 20.0,
+    repulsion_decay: float = 2.0,
+    max_radius: int = 5,
 ) -> np.ndarray:
     """
     Build a potential field for tree avoidance.
@@ -192,18 +195,20 @@ def build_tree_potential_field(
     mask = (dist_tree >= falloff_start) & (dist_tree <= max_radius) & np.isfinite(cost)
 
     # Repulsion: strength * exp(-(d - falloff_start) / decay)
-    repulsion = repulsion_strength * np.exp(-(dist_tree - falloff_start) / max(1e-6, repulsion_decay))
+    repulsion = repulsion_strength * np.exp(
+        -(dist_tree - falloff_start) / max(1e-6, repulsion_decay)
+    )
     cost[mask] += repulsion[mask].astype(cost.dtype)
 
     return cost
 
 
 def build_tree_cost(
-        tree_grid: np.ndarray,
-        min_distance: float = 0.0,
-        trunk_scale: float = 10.0,
-        trunk_tau: float = 0.5,
-        trunk_max_radius: int = 3,
+    tree_grid: np.ndarray,
+    min_distance: float = 0.0,
+    trunk_scale: float = 10.0,
+    trunk_tau: float = 0.5,
+    trunk_max_radius: int = 3,
 ) -> np.ndarray:
     """
     Build cost field for tree avoidance. (Legacy function - use build_tree_potential_field)
@@ -218,29 +223,29 @@ def build_tree_cost(
 
 
 def rebuild_weight_grid(
-        fire_grid: np.ndarray,
-        fire_distance: np.ndarray,
-        known_trees: np.ndarray,
-        base_cost: float = 1.0,
-        # Fire potential field params
-        fire_min_distance: float = 2.0,
-        fire_ideal_distance: float = 4.0,
-        fire_inner_repulsion: float = 10.0,
-        fire_outer_repulsion: float = 2.0,
-        # Legacy fire corridor params (for backwards compatibility)
-        fire_corridor_width: float = None,
-        fire_falloff_rate: float = None,
-        # Tree potential field params
-        tree_min_distance: float = 1.5,
-        tree_repulsion_strength: float = 20.0,
-        tree_repulsion_decay: float = 2.0,
-        tree_max_radius: int = 5,
-        # Legacy tree params (for backwards compatibility)
-        tree_trunk_scale: float = None,
-        tree_trunk_tau: float = None,
-        tree_trunk_max_radius: int = None,
-        # Use potential field or legacy
-        use_potential_field: bool = True,
+    fire_grid: np.ndarray,
+    fire_distance: np.ndarray,
+    known_trees: np.ndarray,
+    base_cost: float = 1.0,
+    # Fire potential field params
+    fire_min_distance: float = 2.0,
+    fire_ideal_distance: float = 4.0,
+    fire_inner_repulsion: float = 10.0,
+    fire_outer_repulsion: float = 2.0,
+    # Legacy fire corridor params (for backwards compatibility)
+    fire_corridor_width: float = None,
+    fire_falloff_rate: float = None,
+    # Tree potential field params
+    tree_min_distance: float = 1.5,
+    tree_repulsion_strength: float = 20.0,
+    tree_repulsion_decay: float = 2.0,
+    tree_max_radius: int = 5,
+    # Legacy tree params (for backwards compatibility)
+    tree_trunk_scale: float = None,
+    tree_trunk_tau: float = None,
+    tree_trunk_max_radius: int = None,
+    # Use potential field or legacy
+    use_potential_field: bool = True,
 ) -> np.ndarray:
     """
     Build complete weight grid combining fire and tree potential fields.
@@ -275,9 +280,12 @@ def rebuild_weight_grid(
         fire_finite = fire_cost[np.isfinite(fire_cost)]
         tree_finite = tree_cost[np.isfinite(tree_cost)]
         if len(fire_finite) > 0 and len(tree_finite) > 0:
-            print(f"  Fire cost range: {fire_finite.min():.1f} - {fire_finite.max():.1f}")
             print(
-                f"  Tree cost range: {tree_finite.min():.1f} - {tree_finite.max():.1f} (trees found: {known_trees.sum()})")
+                f"  Fire cost range: {fire_finite.min():.1f} - {fire_finite.max():.1f}"
+            )
+            print(
+                f"  Tree cost range: {tree_finite.min():.1f} - {tree_finite.max():.1f} (trees found: {known_trees.sum()})"
+            )
     else:
         # Legacy corridor approach
         corridor_width = fire_corridor_width if fire_corridor_width is not None else 2.0
@@ -291,9 +299,17 @@ def rebuild_weight_grid(
             falloff_rate=falloff,
         )
 
-        t_scale = tree_trunk_scale if tree_trunk_scale is not None else tree_repulsion_strength
+        t_scale = (
+            tree_trunk_scale
+            if tree_trunk_scale is not None
+            else tree_repulsion_strength
+        )
         t_tau = tree_trunk_tau if tree_trunk_tau is not None else tree_repulsion_decay
-        t_radius = tree_trunk_max_radius if tree_trunk_max_radius is not None else tree_max_radius
+        t_radius = (
+            tree_trunk_max_radius
+            if tree_trunk_max_radius is not None
+            else tree_max_radius
+        )
 
         tree_cost = build_tree_cost(
             known_trees,
@@ -314,7 +330,10 @@ def rebuild_weight_grid(
 
 # === Fire Approach Point Finding ===
 
-def _distance_point_to_cell_edge(px: float, py: float, cell_row: int, cell_col: int) -> float:
+
+def _distance_point_to_cell_edge(
+    px: float, py: float, cell_row: int, cell_col: int
+) -> float:
     """
     Compute the distance from a point to the nearest edge of a cell.
     """
@@ -332,10 +351,10 @@ def _distance_point_to_cell_edge(px: float, py: float, cell_row: int, cell_col: 
 
 
 def compute_fire_forbidden_zone(
-        fire_grid: np.ndarray,
-        robot_size: int = 3,
-        margin: float = 0.5,
-        resolution: int = 4,
+    fire_grid: np.ndarray,
+    robot_size: int = 3,
+    margin: float = 0.5,
+    resolution: int = 4,
 ) -> tuple[np.ndarray, int]:
     """
     Compute the forbidden zone for the robot center using Minkowski sum inflation.
@@ -359,7 +378,9 @@ def compute_fire_forbidden_zone(
             for c in range(c_min, c_max):
                 sub_center_x = (c + 0.5) / resolution
                 sub_center_y = (r + 0.5) / resolution
-                dist = _distance_point_to_cell_edge(sub_center_x, sub_center_y, fire_row, fire_col)
+                dist = _distance_point_to_cell_edge(
+                    sub_center_x, sub_center_y, fire_row, fire_col
+                )
                 if dist <= inflation_dist:
                     forbidden[r, c] = True
 
@@ -367,12 +388,12 @@ def compute_fire_forbidden_zone(
 
 
 def find_nearest_fire_approach_point(
-        fire_grid: np.ndarray,
-        robot_x: float,
-        robot_y: float,
-        robot_size: int = 3,
-        margin: float = 0.5,
-        resolution: int = 4,
+    fire_grid: np.ndarray,
+    robot_x: float,
+    robot_y: float,
+    robot_size: int = 3,
+    margin: float = 0.5,
+    resolution: int = 4,
 ) -> tuple[float, float] | None:
     """
     Find the nearest point where the robot center can be to approach the fire.
@@ -382,14 +403,16 @@ def find_nearest_fire_approach_point(
     if not fire_grid.any():
         return None
 
-    forbidden, res = compute_fire_forbidden_zone(fire_grid, robot_size, margin, resolution)
+    forbidden, res = compute_fire_forbidden_zone(
+        fire_grid, robot_size, margin, resolution
+    )
     sub_rows, sub_cols = rows * res, cols * res
 
     boundary_zone = _dilate8(forbidden, 1) & ~forbidden
 
     half_sub = (robot_size // 2) * res
     valid_mask = np.zeros((sub_rows, sub_cols), dtype=bool)
-    valid_mask[half_sub:sub_rows - half_sub, half_sub:sub_cols - half_sub] = True
+    valid_mask[half_sub : sub_rows - half_sub, half_sub : sub_cols - half_sub] = True
 
     candidates = boundary_zone & valid_mask
 
@@ -403,13 +426,15 @@ def find_nearest_fire_approach_point(
     robot_sub_x = robot_x * res
     robot_sub_y = robot_y * res
 
-    best_dist = float('inf')
+    best_dist = float("inf")
     best_pos = None
 
     for sub_row, sub_col in candidate_positions:
         sub_center_x = sub_col + 0.5
         sub_center_y = sub_row + 0.5
-        dist = math.sqrt((sub_center_x - robot_sub_x) ** 2 + (sub_center_y - robot_sub_y) ** 2)
+        dist = math.sqrt(
+            (sub_center_x - robot_sub_x) ** 2 + (sub_center_y - robot_sub_y) ** 2
+        )
         if dist < best_dist:
             best_dist = dist
             best_pos = (sub_center_x / res, sub_center_y / res)
