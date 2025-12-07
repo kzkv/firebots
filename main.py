@@ -1,6 +1,6 @@
 # Michael Laks & Tom Kazakov
 # RBE 550, Firebots (course project)
-# Field D* version with smooth pursuit controller
+# D* Lite version with smooth pursuit controller
 
 import math
 
@@ -8,7 +8,7 @@ import numpy as np
 import pygame
 
 from exploration import ExplorationMap
-from field_d_star import FieldDStar
+from d_star_lite import DStarLite
 from fire_bitmap import load_fire_bitmap
 from fire_spread import FireSpread
 from firebot import Firebot
@@ -24,7 +24,7 @@ from render import World
 # Field dimensions: 1 cell = 3 ft
 COLS = 100
 ROWS = 60
-CELL_SIZE = 20
+CELL_SIZE = 18
 TREE_COUNT = 50
 
 # Robot Constants
@@ -33,10 +33,13 @@ ROBOT_Y = ROWS / 2
 
 SPREAD_PACE = 0.5  # Seconds per new cell getting on fire
 
+# Path planning parameters
+STRING_PULL_DIST = 8.0  # Max string-pull distance (0 = disabled, 5-8 = conservative, 15+ = aggressive)
+
 # Initialize pygame and world
 rng = np.random.default_rng()
 pygame.init()
-pygame.display.set_caption("Firebots - Field D*")
+pygame.display.set_caption("Firebots - D* Lite")
 world = World(ROWS, COLS, CELL_SIZE)
 
 # Load fire bitmap
@@ -72,9 +75,9 @@ weight_grid = rebuild_weight_grid(
 finite = weight_grid[np.isfinite(weight_grid)]
 print(f"Weight range: min={finite.min():.1f}, max={finite.max():.1f}")
 
-# Create Field D* planner
-planner = FieldDStar(ROWS, COLS)
-planned_path = []  # Will contain (x, y) tuples from Field D*
+# Create D* Lite planner
+planner = DStarLite(ROWS, COLS)
+planned_path = []  # Will contain (x, y) tuples
 path_index = 0
 
 # Compute forbidden zone for visualization
@@ -132,21 +135,21 @@ while running:
                 cell_pos = world.screen_to_cell(e.pos[0], e.pos[1])
                 if cell_pos is not None:
                     target_pos = cell_pos
-                    start = (int(firebot.y), int(firebot.x))
-                    goal = (int(cell_pos[1]), int(cell_pos[0]))
+                    start = (round(firebot.y), round(firebot.x))
+                    goal = (round(cell_pos[1]), round(cell_pos[0]))
 
                     print(f"Planning from {start} to {goal}")
                     planner.initialize(
                         start, goal, weight_grid, exploration.get_known_obstacles()
                     )
                     if planner.compute_shortest_path():
-                        planned_path = planner.extract_path()  # Returns (x, y) tuples
+                        planned_path = planner.extract_path(string_pull_dist=STRING_PULL_DIST)
                         path_index = 0
                         last_stuck_check_pos = (
                             firebot.x,
                             firebot.y,
                         )  # Reset stuck detection
-                        print(f"Smooth path has {len(planned_path)} waypoints")
+                        print(f"Path has {len(planned_path)} waypoints")
                     else:
                         planned_path = []
                         print("No path found!")
@@ -181,34 +184,36 @@ while running:
                 )
                 if approach_point is not None:
                     target_pos = approach_point
-                    start = (int(firebot.y), int(firebot.x))
-                    goal = (int(approach_point[1]), int(approach_point[0]))
+                    start = (round(firebot.y), round(firebot.x))
+                    goal = (round(approach_point[1]), round(approach_point[0]))
                     planner.initialize(
                         start, goal, weight_grid, exploration.get_known_obstacles()
                     )
                     if planner.compute_shortest_path():
-                        planned_path = planner.extract_path()
+                        planned_path = planner.extract_path(string_pull_dist=STRING_PULL_DIST)
                         path_index = 0
                         print(f"Path to fire: {len(planned_path)} waypoints")
 
-    # Path following
+    # Path following with DWA
     if path_following_enabled and len(planned_path) > 0:
         if use_smooth_control:
-            # Pure pursuit - smooth motion without stopping to turn
-            still_going = firebot.pure_pursuit_step(planned_path, dt, lookahead=2.5)
+            # Pure pursuit path following with collision checking
+            result = firebot.follow_path(planned_path, weight_grid, dt, lookahead=2.5)
 
-            if not still_going:
+            if result == False:
                 print("Path complete!")
                 planned_path = []
                 target_pos = None
+            elif result == "stuck":
+                print("DWA: No valid trajectory - forcing replan")
+                needs_replan = True
         else:
             # Original rotate-then-drive behavior using set_target
-            # Find a target point on the path
             target = None
             for i, (px, py) in enumerate(planned_path):
                 dx = px - firebot.x
                 dy = py - firebot.y
-                if dx * dx + dy * dy > 4.0:  # 2 cells away
+                if dx * dx + dy * dy > 4.0:
                     target = (px, py)
                     break
 
@@ -220,7 +225,6 @@ while running:
 
             firebot.control_step(dt)
 
-            # Check if done
             if planned_path:
                 goal_x, goal_y = planned_path[-1]
                 dx = goal_x - firebot.x
@@ -231,7 +235,6 @@ while running:
                     target_pos = None
                     firebot.stop()
     else:
-        # No path - just run control step (handles stopping)
         firebot.control_step(dt)
 
     # Mark fireline cells as robot moves
@@ -279,13 +282,13 @@ while running:
         )
 
         if len(planned_path) > 0 and target_pos is not None:
-            start = (int(firebot.y), int(firebot.x))
-            goal = (int(target_pos[1]), int(target_pos[0]))
+            start = (round(firebot.y), round(firebot.x))
+            goal = (round(target_pos[1]), round(target_pos[0]))
             planner.initialize(
                 start, goal, weight_grid, exploration.get_known_obstacles()
             )
             if planner.compute_shortest_path():
-                new_path = planner.extract_path()
+                new_path = planner.extract_path(string_pull_dist=STRING_PULL_DIST)
                 if new_path:
                     planned_path = new_path
                     path_index = 0
@@ -317,7 +320,7 @@ while running:
         else:
             world.render_fireline_path(firebot.fireline_path)
 
-    # Render planned path (smooth path is list of (x, y))
+    # Render planned path (path is list of (x, y))
     if show_path and len(planned_path) > 0:
         # Convert (x, y) to (row, col) for render_path
         path_cells = [(int(round(y)), int(round(x))) for x, y in planned_path]

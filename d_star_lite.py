@@ -1,10 +1,9 @@
-# D* Lite Path Planner - Cleaned Up
+# D* Lite Path Planner with String-Pulling
 # RBE 550, Firebots (course project)
 #
-# Changes from original:
-# - Single source of truth for obstacles (merged into cost_grid)
-# - Cleaner code structure
-# - Removed redundant obstacle_grid parameter from internal methods
+# Original D* Lite with added:
+# - String-pulling for smoother paths (tunable max distance)
+# - extract_path() returns (x, y) coordinates
 
 import heapq
 import math
@@ -79,6 +78,10 @@ class DStarLite:
 
     def _is_passable(self, row, col) -> bool:
         """Check if robot's footprint fits at this cell (cached)."""
+        # Bounds check
+        if row < 0 or row >= self.rows or col < 0 or col >= self.cols:
+            return False
+
         # Check cache first
         cached = self.passable_cache[row, col]
         if cached != -1:
@@ -199,10 +202,10 @@ class DStarLite:
 
         path_exists = np.isfinite(self.g[sr, sc])
         print(f"D* Lite: {iterations} iterations, path={'found' if path_exists else 'NOT FOUND'}")
-        return iterations < max_iterations
+        return path_exists
 
-    def extract_path(self) -> list[tuple[int, int]]:
-        """Extract path from start to goal by following best neighbors."""
+    def _extract_grid_path(self) -> list[tuple[int, int]]:
+        """Extract path from start to goal by following best neighbors. Returns (row, col)."""
         if self.start is None or self.goal is None:
             return []
 
@@ -245,6 +248,114 @@ class DStarLite:
 
         return path
 
+    # =========================================================================
+    # STRING-PULLING
+    # =========================================================================
+
+    def _line_of_sight(self, x1: float, y1: float, x2: float, y2: float) -> bool:
+        """
+        Check if straight line between (x1,y1) and (x2,y2) is collision-free.
+        Uses robot footprint checking along the line.
+        """
+        dx = x2 - x1
+        dy = y2 - y1
+        dist = math.sqrt(dx * dx + dy * dy)
+
+        if dist < 0.5:
+            return True
+
+        # Check more densely - every 0.3 cells to catch obstacles with 3x3 robot
+        steps = max(3, int(dist * 3))
+
+        for i in range(steps + 1):
+            t = i / steps
+            x = x1 + t * dx
+            y = y1 + t * dy
+
+            row, col = int(y), int(x)
+            if not self._is_passable(row, col):
+                return False
+
+        return True
+
+    def _string_pull(self, grid_path: list[tuple[int, int]],
+                     max_skip_dist: float = 15.0) -> list[tuple[float, float]]:
+        """
+        Convert grid path (row, col) to smooth path (x, y) via string-pulling.
+
+        Args:
+            grid_path: List of (row, col) from D* Lite
+            max_skip_dist: Maximum distance to skip ahead (cells).
+                          Lower = stays closer to original path (better for corridor).
+                          Higher = more aggressive smoothing.
+                          Set to 0 or negative to disable string-pulling.
+
+        Returns:
+            List of (x, y) coordinates
+        """
+        if not grid_path:
+            return []
+
+        if len(grid_path) == 1:
+            r, c = grid_path[0]
+            return [(float(c) + 0.5, float(r) + 0.5)]
+
+        # Convert to (x, y) at cell centers
+        continuous = [(float(c) + 0.5, float(r) + 0.5) for r, c in grid_path]
+
+        # If string-pulling disabled, just return converted path
+        if max_skip_dist <= 0:
+            return continuous
+
+        # String pulling with distance limit
+        result = [continuous[0]]
+        current = 0
+
+        while current < len(continuous) - 1:
+            best = current + 1
+            curr_x, curr_y = continuous[current]
+
+            # Look ahead to find furthest visible point within distance limit
+            for target in range(current + 2, len(continuous)):
+                tgt_x, tgt_y = continuous[target]
+
+                # Check distance limit
+                dist = math.sqrt((tgt_x - curr_x) ** 2 + (tgt_y - curr_y) ** 2)
+                if dist > max_skip_dist:
+                    break
+
+                # Check line of sight
+                if self._line_of_sight(curr_x, curr_y, tgt_x, tgt_y):
+                    best = target
+
+            result.append(continuous[best])
+            current = best
+
+        return result
+
+    def extract_path(self, string_pull_dist: float = 10.0) -> list[tuple[float, float]]:
+        """
+        Extract path as (x, y) coordinates with optional string-pulling.
+
+        Args:
+            string_pull_dist: Max distance for string-pulling (cells).
+                             0 = no string-pulling (grid path only)
+                             10-15 = moderate smoothing (good balance)
+                             50+ = aggressive smoothing
+
+        Returns:
+            List of (x, y) waypoints
+        """
+        grid_path = self._extract_grid_path()
+        if not grid_path:
+            return []
+
+        return self._string_pull(grid_path, max_skip_dist=string_pull_dist)
+
+    # =========================================================================
+    # ORIGINAL METHODS
+    # =========================================================================
+
     def update_start(self, new_start: tuple):
         """Call when robot moves."""
         if self.start:
@@ -278,9 +389,7 @@ class DStarLite:
     def get_next_waypoint(self, path: list, current_index: int,
                           robot_x: float, robot_y: float,
                           lookahead: float = 3.0) -> int:
-        """
-        Find waypoint along path at approximately lookahead distance.
-        """
+        """Find waypoint along path at approximately lookahead distance."""
         if current_index >= len(path):
             return current_index
 
