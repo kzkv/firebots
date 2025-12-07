@@ -1,6 +1,6 @@
 # Firebot: Unicycle/Differential-Drive Kinematics
 # RBE 550, Firebots (course project)
-# Updated for smooth pursuit control
+# Clean pure pursuit without oscillation-prone repulsion
 
 import math
 import numpy as np
@@ -40,7 +40,7 @@ class Firebot:
         self.wheel_base = 2.0  # distance between wheels in cells (for diff-drive)
 
         # Velocity limits (cells per second, radians per second)
-        self.max_linear_vel = 2.0  # cells/s
+        self.max_linear_vel = 4.0  # cells/s
         self.max_angular_vel = math.pi  # rad/s (180 deg/s)
 
         # Current velocities
@@ -119,10 +119,13 @@ class Firebot:
         else:
             self.state = "driving"
 
-    def pure_pursuit_step(self, path: list[tuple[float, float]], dt: float, lookahead: float = 2.5):
+    def pure_pursuit_step(self, path: list[tuple[float, float]], dt: float, lookahead: float = 2.0):
         """
         Pure pursuit controller for smooth path following.
-        No turn-in-place - always moves forward while steering.
+
+        This version closely follows the planned path waypoints rather than
+        aggressively cutting toward distant lookahead points. This is important
+        for navigating tight gaps where the path threads through narrow spaces.
 
         Args:
             path: List of (x, y) waypoints
@@ -138,10 +141,6 @@ class Firebot:
             self.update(dt)
             return False
 
-        # Find lookahead point on path
-        lookahead_sq = lookahead * lookahead
-        target_point = None
-
         # Find closest point on path, skipping points behind us
         min_dist_sq = float('inf')
         closest_idx = 0
@@ -151,18 +150,21 @@ class Firebot:
             dy = py - self.y
             dist_sq = dx * dx + dy * dy
 
-            # Skip points that are behind us
-            if dist_sq > 0.25:  # Not too close
+            # Skip points that are clearly behind us (>126°)
+            if dist_sq > 0.25:
                 angle_to_point = math.atan2(dy, dx)
                 angle_diff = abs(self._normalize_angle(angle_to_point - self.theta))
-                if angle_diff > math.pi * 0.7:  # Behind us (>126°)
+                if angle_diff > math.pi * 0.7:
                     continue
 
             if dist_sq < min_dist_sq:
                 min_dist_sq = dist_sq
                 closest_idx = i
 
-        # Look ahead from closest point
+        # Find lookahead point - first point beyond lookahead distance from robot
+        lookahead_sq = lookahead * lookahead
+        target_idx = closest_idx
+
         for i in range(closest_idx, len(path)):
             px, py = path[i]
             dx = px - self.x
@@ -170,12 +172,13 @@ class Firebot:
             dist_sq = dx * dx + dy * dy
 
             if dist_sq >= lookahead_sq:
-                target_point = (px, py)
+                target_idx = i
                 break
+        else:
+            # No point beyond lookahead, use the last point
+            target_idx = len(path) - 1
 
-        # If no point at lookahead, use last point
-        if target_point is None:
-            target_point = path[-1]
+        target_point = path[target_idx]
 
         # Check if we've reached the goal
         goal_x, goal_y = path[-1]
@@ -214,7 +217,7 @@ class Firebot:
         self.omega = self.k_angular * angle_error
         self.omega = max(-self.max_angular_vel, min(self.max_angular_vel, self.omega))
 
-        # If angle error is very large (> 90°), reduce speed more
+        # If angle error is very large (> 90°), reduce speed significantly
         if abs(angle_error) > math.pi / 2:
             self.v *= 0.3
 
