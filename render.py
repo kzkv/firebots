@@ -2,8 +2,8 @@
 Tree sprite source: https://github.com/jube/slowtree
 """
 
-import math
 import hashlib
+import math
 
 import numpy as np
 import pygame
@@ -59,6 +59,7 @@ class World:
         self.show_weights = False
         self.show_forbidden_zone = False
         self.show_arrows = False
+        self.show_fireline_grid = False
         self.hud_font = pygame.font.SysFont(None, max(12, self.cell_size - 6))
         self.hud_rect = pygame.Rect(
             0, self.field_rect.bottom + self.margin, self.window_width, self.hud_height
@@ -420,8 +421,14 @@ class World:
 
         # Forbidden Zone checkbox
         x = next_x + 15
-        self.forbidden_zone_toggle_rect, _ = self._draw_checkbox(
+        self.forbidden_zone_toggle_rect, next_x = self._draw_checkbox(
             x, y, box, self.show_forbidden_zone, "Forbidden"
+        )
+
+        # Fireline Grid checkbox
+        x = next_x + 15
+        self.fireline_grid_toggle_rect, _ = self._draw_checkbox(
+            x, y, box, self.show_fireline_grid, "Fireline"
         )
 
     def handle_event(self, e):

@@ -2,12 +2,16 @@
 # RBE 550, Firebots (course project)
 # Field D* version with smooth pursuit controller
 
-import pygame
-import numpy as np
 import math
 
+import numpy as np
+import pygame
+
+from exploration import ExplorationMap
 from field_d_star import FieldDStar
 from fire_bitmap import load_fire_bitmap
+from fire_spread import FireSpread
+from firebot import Firebot
 from obstacles import place_trees, clear_robot_start
 from planning import (
     find_nearest_fire_approach_point,
@@ -16,8 +20,6 @@ from planning import (
     rebuild_weight_grid,
 )
 from render import World
-from firebot import Firebot
-from exploration import ExplorationMap
 
 # Field dimensions: 1 cell = 3 ft
 COLS = 100
@@ -28,6 +30,8 @@ TREE_COUNT = 50
 # Robot Constants
 ROBOT_X = 5
 ROBOT_Y = ROWS / 2
+
+SPREAD_PACE = 0.5  # Seconds per new cell getting on fire
 
 # Initialize pygame and world
 rng = np.random.default_rng()
@@ -50,6 +54,9 @@ exploration = ExplorationMap(world.rows, world.cols)
 # Compute fire distance field
 fire_distance = compute_fire_distance_field(fire_grid)
 
+# Create fire spread simulation
+fire_spread = FireSpread(fire_grid, SPREAD_PACE)
+
 # Create firebot at initial position
 firebot = Firebot(x=ROBOT_X, y=ROBOT_Y, theta=0.0)
 
@@ -57,7 +64,9 @@ firebot = Firebot(x=ROBOT_X, y=ROBOT_Y, theta=0.0)
 exploration.update(firebot.x, firebot.y, firebot.sensor_radius, tree_grid)
 
 # Build weight grid with known obstacles
-weight_grid = rebuild_weight_grid(fire_grid, fire_distance, exploration.get_known_obstacles())
+weight_grid = rebuild_weight_grid(
+    fire_grid, fire_distance, exploration.get_known_obstacles()
+)
 
 # Debug output
 finite = weight_grid[np.isfinite(weight_grid)]
@@ -107,10 +116,18 @@ while running:
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if hasattr(world, "toggle_rect") and world.toggle_rect.collidepoint(e.pos):
                 world.show_weights = not world.show_weights
-            elif hasattr(world, "arrows_toggle_rect") and world.arrows_toggle_rect.collidepoint(e.pos):
+            elif hasattr(
+                world, "arrows_toggle_rect"
+            ) and world.arrows_toggle_rect.collidepoint(e.pos):
                 world.show_arrows = not world.show_arrows
-            elif hasattr(world, "forbidden_zone_toggle_rect") and world.forbidden_zone_toggle_rect.collidepoint(e.pos):
+            elif hasattr(
+                world, "forbidden_zone_toggle_rect"
+            ) and world.forbidden_zone_toggle_rect.collidepoint(e.pos):
                 world.show_forbidden_zone = not world.show_forbidden_zone
+            elif hasattr(
+                world, "fireline_grid_toggle_rect"
+            ) and world.fireline_grid_toggle_rect.collidepoint(e.pos):
+                world.show_fireline_grid = not world.show_fireline_grid
             else:
                 cell_pos = world.screen_to_cell(e.pos[0], e.pos[1])
                 if cell_pos is not None:
@@ -119,11 +136,16 @@ while running:
                     goal = (int(cell_pos[1]), int(cell_pos[0]))
 
                     print(f"Planning from {start} to {goal}")
-                    planner.initialize(start, goal, weight_grid, exploration.get_known_obstacles())
+                    planner.initialize(
+                        start, goal, weight_grid, exploration.get_known_obstacles()
+                    )
                     if planner.compute_shortest_path():
                         planned_path = planner.extract_path()  # Returns (x, y) tuples
                         path_index = 0
-                        last_stuck_check_pos = (firebot.x, firebot.y)  # Reset stuck detection
+                        last_stuck_check_pos = (
+                            firebot.x,
+                            firebot.y,
+                        )  # Reset stuck detection
                         print(f"Smooth path has {len(planned_path)} waypoints")
                     else:
                         planned_path = []
@@ -151,14 +173,19 @@ while running:
                 print("Movement cancelled")
             elif e.key == pygame.K_f:
                 approach_point = find_nearest_fire_approach_point(
-                    fire_grid, firebot.x, firebot.y,
-                    robot_size=firebot.size, margin=firebot.fire_approach_margin,
+                    fire_grid,
+                    firebot.x,
+                    firebot.y,
+                    robot_size=firebot.size,
+                    margin=firebot.fire_approach_margin,
                 )
                 if approach_point is not None:
                     target_pos = approach_point
                     start = (int(firebot.y), int(firebot.x))
                     goal = (int(approach_point[1]), int(approach_point[0]))
-                    planner.initialize(start, goal, weight_grid, exploration.get_known_obstacles())
+                    planner.initialize(
+                        start, goal, weight_grid, exploration.get_known_obstacles()
+                    )
                     if planner.compute_shortest_path():
                         planned_path = planner.extract_path()
                         path_index = 0
@@ -207,6 +234,19 @@ while running:
         # No path - just run control step (handles stopping)
         firebot.control_step(dt)
 
+    # Mark fireline cells as robot moves
+    if firebot.cutting_fireline and firebot.is_moving():
+        fire_spread.mark_fireline(
+            firebot.x,
+            firebot.y,
+            firebot.theta,
+            blade_width=1.5,
+            robot_size=firebot.size,
+        )
+
+    # Update fire spread simulation
+    fire_spread.update(dt)
+
     # Update exploration
     new_obstacles_found = exploration.update(
         firebot.x, firebot.y, firebot.sensor_radius, tree_grid
@@ -225,19 +265,25 @@ while running:
             dist_moved = math.sqrt(dx * dx + dy * dy)
 
             if dist_moved < stuck_threshold:
-                print(f"Robot stuck! Only moved {dist_moved:.2f} cells. Forcing replan...")
+                print(
+                    f"Robot stuck! Only moved {dist_moved:.2f} cells. Forcing replan..."
+                )
                 needs_replan = True
 
         last_stuck_check_pos = (firebot.x, firebot.y)
 
     # Replan if obstacles discovered or robot stuck
     if needs_replan:
-        weight_grid = rebuild_weight_grid(fire_grid, fire_distance, exploration.get_known_obstacles())
+        weight_grid = rebuild_weight_grid(
+            fire_grid, fire_distance, exploration.get_known_obstacles()
+        )
 
         if len(planned_path) > 0 and target_pos is not None:
             start = (int(firebot.y), int(firebot.x))
             goal = (int(target_pos[1]), int(target_pos[0]))
-            planner.initialize(start, goal, weight_grid, exploration.get_known_obstacles())
+            planner.initialize(
+                start, goal, weight_grid, exploration.get_known_obstacles()
+            )
             if planner.compute_shortest_path():
                 new_path = planner.extract_path()
                 if new_path:
@@ -298,6 +344,9 @@ while running:
 
     if world.show_forbidden_zone:
         world.render_forbidden_zone(forbidden_zone, forbidden_zone_res)
+
+    if world.show_fireline_grid:
+        world.render_fireline_cells(fire_spread.fireline_grid)
 
     if target_pos is not None:
         world.render_target_marker(target_pos[0], target_pos[1])
