@@ -267,3 +267,67 @@ def find_nearest_fire_approach_point(
             best_pos = (sub_center_x / res, sub_center_y / res)
 
     return best_pos
+
+
+# Potential Field Path Planning
+
+def compute_fire_distance_field(fire_grid: np.ndarray) -> np.ndarray:
+    """
+    Compute the distance from each cell to the nearest fire cell.
+    Uses chamfer distance for a good approximation of Euclidean distance.
+    """
+    return _chamfer_distance8(fire_grid)
+
+
+def build_fire_corridor_cost(
+        fire_grid: np.ndarray,
+        fire_distance: np.ndarray,
+        min_distance: float = 2.0,
+        ideal_distance: float = 5.0,
+        falloff_rate: float = 1.0,
+) -> np.ndarray:
+    """
+    Build cost field showing the corridor around fire.
+    Used for visualization and impassable zones.
+    """
+    cost = np.zeros_like(fire_distance, dtype=np.float32)
+
+    # Too close = impassable
+    cost[fire_distance < min_distance] = np.inf
+
+    # Ramp into corridor
+    in_corridor = (fire_distance >= min_distance) & (fire_distance <= ideal_distance)
+    cost[in_corridor] = (ideal_distance - fire_distance[in_corridor]) * 0.5
+
+    # Beyond ideal = increasing cost
+    beyond = fire_distance > ideal_distance
+    cost[beyond] = (fire_distance[beyond] - ideal_distance) * falloff_rate
+
+    return cost
+
+
+def rebuild_weight_grid(fire_grid, fire_distance, known_trees):
+    """Rebuild weight grid using currently known obstacles."""
+    corridor_cost = build_fire_corridor_cost(
+        fire_grid,
+        fire_distance,
+        min_distance=2.0,
+        ideal_distance=5.0,
+        falloff_rate=2.0,
+    )
+
+    tree_cost = build_weight_grid(
+        fire_grid,
+        known_trees,
+        base_cost=1.0,
+        fire_1=0.0,
+        fire_2=0.0,
+        trunk_scale=10.0,
+        trunk_tau=0.5,
+        trunk_max_radius=3,
+    )
+
+    return corridor_cost + tree_cost
+
+
+

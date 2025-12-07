@@ -1,3 +1,6 @@
+# obstacles.py - Tree placement
+# RBE 550, Firebots (course project)
+
 import numpy as np
 
 TREE_SHAPES = [
@@ -23,6 +26,20 @@ def place_trees(cols, rows, count, rng=None):
 
         for dx, dy in tree:
             r, c = anchor_row + dy, anchor_col + dx
-            tree_grid[r, c] = True  # overlap is fine (remains True)
+            tree_grid[r, c] = True
 
     return tree_grid
+
+
+def clear_robot_start(tree_grid, robot_x, robot_y, robot_size=3, margin=1):
+    """Clear trees from robot starting position."""
+    offset = robot_size // 2 + margin
+    cx, cy = int(round(robot_x)), int(round(robot_y))
+
+    rows, cols = tree_grid.shape
+    r_min = max(0, cy - offset)
+    r_max = min(rows, cy + offset + 1)
+    c_min = max(0, cx - offset)
+    c_max = min(cols, cx + offset + 1)
+
+    tree_grid[r_min:r_max, c_min:c_max] = False

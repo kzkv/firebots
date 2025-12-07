@@ -1,5 +1,6 @@
 # Firebot: Unicycle/Differential-Drive Kinematics
 # RBE 550, Firebots (course project)
+# Updated for smooth pursuit control
 
 import math
 import numpy as np
@@ -16,12 +17,12 @@ class Firebot:
     """
 
     def __init__(
-        self,
-        x: float,
-        y: float,
-        theta: float = 0.0,
-        sensor_radius: float = 10.0,
-        fire_approach_margin: float = 0.5,
+            self,
+            x: float,
+            y: float,
+            theta: float = 0.0,
+            sensor_radius: float = 10.0,
+            fire_approach_margin: float = 0.5,
     ):
         # Position in cell coordinates (fractional, continuous)
         self.x = x
@@ -39,7 +40,7 @@ class Firebot:
         self.wheel_base = 2.0  # distance between wheels in cells (for diff-drive)
 
         # Velocity limits (cells per second, radians per second)
-        self.max_linear_vel = 5.0  # cells/s
+        self.max_linear_vel = 2.0  # cells/s
         self.max_angular_vel = math.pi  # rad/s (180 deg/s)
 
         # Current velocities
@@ -48,13 +49,13 @@ class Firebot:
 
         # Motion controller state
         self.target = None  # (x, y) target position
-        self.state = "idle"  # "idle", "rotating", "driving", "final_rotate"
+        self.state = "idle"  # "idle", "rotating", "driving"
 
         # Controller gains
         self.k_angular = 3.0  # proportional gain for rotation
         self.k_linear = 2.0  # proportional gain for linear motion
-        self.angle_threshold = 0.05  # rad (~3 deg) - when to stop rotating
-        self.distance_threshold = 0.1  # cells - when to stop driving
+        self.angle_threshold = 0.1  # rad (~6 deg) - when to stop rotating
+        self.distance_threshold = 0.5  # cells - when to consider "arrived"
 
         # Fireline cutting mode
         self.cutting_fireline = True  # when True, record path as fireline
@@ -62,12 +63,8 @@ class Firebot:
         self.fireline_path: list[tuple[float, float, float]] = []
         self._last_fireline_pos: tuple[float, float] | None = None
         self._last_fireline_theta: float | None = None
-        self.fireline_sample_dist = (
-            0.001  # min distance between samples when driving (cells)
-        )
-        self.fireline_sample_angle = (
-            0.1  # min angle change between samples when rotating (radians, ~3 deg)
-        )
+        self.fireline_sample_dist = 0.3  # min distance between samples (cells)
+        self.fireline_sample_angle = 0.15  # min angle change (~8.5 degrees)
 
     def update(self, dt: float):
         """
@@ -85,23 +82,154 @@ class Firebot:
         self.theta += self.omega * dt
 
         # Normalize theta to [-pi, pi]
-        self.theta = math.atan2(math.sin(self.theta), math.cos(self.theta))
+        self.theta = self._normalize_angle(self.theta)
 
-    def set_target(self, target_x: float, target_y: float):
-        """Set a new target position to drive to."""
+        # Sample fireline when moving
+        if self.cutting_fireline and (abs(self.v) > 0.01 or abs(self.omega) > 0.01):
+            self._sample_fireline()
+
+    def set_target(self, target_x: float, target_y: float, force_rotate: bool = False):
+        """
+        Set a new target position to drive to.
+        """
+        if self.target is not None and not force_rotate:
+            old_dx = self.target[0] - self.x
+            old_dy = self.target[1] - self.y
+            new_dx = target_x - self.x
+            new_dy = target_y - self.y
+
+            if old_dx * old_dx + old_dy * old_dy > 0.01:
+                old_angle = math.atan2(old_dy, old_dx)
+                new_angle = math.atan2(new_dy, new_dx)
+                angle_diff = abs(self._normalize_angle(new_angle - old_angle))
+
+                if angle_diff < 0.3 and self.state == "driving":
+                    self.target = (target_x, target_y)
+                    return
+
         self.target = (target_x, target_y)
-        self.state = "rotating"
+
+        dx = target_x - self.x
+        dy = target_y - self.y
+        target_angle = math.atan2(dy, dx)
+        angle_error = abs(self._normalize_angle(target_angle - self.theta))
+
+        if angle_error > self.angle_threshold * 3 or force_rotate:
+            self.state = "rotating"
+        else:
+            self.state = "driving"
+
+    def pure_pursuit_step(self, path: list[tuple[float, float]], dt: float, lookahead: float = 2.5):
+        """
+        Pure pursuit controller for smooth path following.
+        No turn-in-place - always moves forward while steering.
+
+        Args:
+            path: List of (x, y) waypoints
+            dt: Time step
+            lookahead: Lookahead distance in cells
+
+        Returns:
+            True if still following path, False if reached end or no path
+        """
+        if not path or len(path) < 1:
+            self.v = 0.0
+            self.omega = 0.0
+            self.update(dt)
+            return False
+
+        # Find lookahead point on path
+        lookahead_sq = lookahead * lookahead
+        target_point = None
+
+        # Find closest point on path, skipping points behind us
+        min_dist_sq = float('inf')
+        closest_idx = 0
+
+        for i, (px, py) in enumerate(path):
+            dx = px - self.x
+            dy = py - self.y
+            dist_sq = dx * dx + dy * dy
+
+            # Skip points that are behind us
+            if dist_sq > 0.25:  # Not too close
+                angle_to_point = math.atan2(dy, dx)
+                angle_diff = abs(self._normalize_angle(angle_to_point - self.theta))
+                if angle_diff > math.pi * 0.7:  # Behind us (>126°)
+                    continue
+
+            if dist_sq < min_dist_sq:
+                min_dist_sq = dist_sq
+                closest_idx = i
+
+        # Look ahead from closest point
+        for i in range(closest_idx, len(path)):
+            px, py = path[i]
+            dx = px - self.x
+            dy = py - self.y
+            dist_sq = dx * dx + dy * dy
+
+            if dist_sq >= lookahead_sq:
+                target_point = (px, py)
+                break
+
+        # If no point at lookahead, use last point
+        if target_point is None:
+            target_point = path[-1]
+
+        # Check if we've reached the goal
+        goal_x, goal_y = path[-1]
+        dx = goal_x - self.x
+        dy = goal_y - self.y
+        dist_to_goal = math.sqrt(dx * dx + dy * dy)
+
+        if dist_to_goal < 0.7:
+            self.v = 0.0
+            self.omega = 0.0
+            self.update(dt)
+            return False  # Reached goal
+
+        # Compute control toward target point
+        tx, ty = target_point
+        dx = tx - self.x
+        dy = ty - self.y
+        dist = math.sqrt(dx * dx + dy * dy)
+
+        if dist < 0.1:
+            self.v = 0.0
+            self.omega = 0.0
+            self.update(dt)
+            return True
+
+        # Angle to target
+        target_angle = math.atan2(dy, dx)
+        angle_error = self._normalize_angle(target_angle - self.theta)
+
+        # Linear velocity - slow down for sharp turns and near goal
+        turn_factor = max(0.3, 1.0 - abs(angle_error) / math.pi)
+        approach_factor = min(1.0, dist_to_goal / 3.0)
+        self.v = self.max_linear_vel * turn_factor * approach_factor
+
+        # Angular velocity - proportional to angle error
+        self.omega = self.k_angular * angle_error
+        self.omega = max(-self.max_angular_vel, min(self.max_angular_vel, self.omega))
+
+        # If angle error is very large (> 90°), reduce speed more
+        if abs(angle_error) > math.pi / 2:
+            self.v *= 0.3
+
+        self.update(dt)
+        return True
 
     def control_step(self, dt: float):
         """
         Execute one step of the motion controller.
-        Uses a rotate-then-drive approach:
-        1. Rotate to face target
-        2. Drive straight to target
+        Uses a rotate-then-drive approach with smooth transitions.
         """
         if self.target is None or self.state == "idle":
             self.v = 0.0
             self.omega = 0.0
+            self.update(dt)
             return
 
         tx, ty = self.target
@@ -109,21 +237,14 @@ class Firebot:
         dy = ty - self.y
         distance = math.sqrt(dx * dx + dy * dy)
 
-        # Angle to target
         target_angle = math.atan2(dy, dx)
         angle_error = self._normalize_angle(target_angle - self.theta)
 
         if self.state == "rotating":
-            # Sample fireline during rotation
-            self._sample_fireline()
-
-            # Rotate to face target
             if abs(angle_error) < self.angle_threshold:
                 self.omega = 0.0
                 self.state = "driving"
-                self._sample_fireline()
             else:
-                # P controller for rotation
                 self.omega = np.clip(
                     self.k_angular * angle_error,
                     -self.max_angular_vel,
@@ -132,71 +253,52 @@ class Firebot:
                 self.v = 0.0
 
         elif self.state == "driving":
-            # Sample fireline while driving
-            self._sample_fireline()
-
-            # Check if we've arrived
             if distance < self.distance_threshold:
                 self.v = 0.0
                 self.omega = 0.0
                 self.state = "idle"
                 self.target = None
-                # Final sample at arrival
-                self._sample_fireline()
+                self.update(dt)
                 return
 
-            # Recalculate angle error while driving (small corrections)
-            if abs(angle_error) > self.angle_threshold * 2:
-                # Need to re-rotate if we've drifted too much
+            if abs(angle_error) > self.angle_threshold * 4:
                 self.state = "rotating"
+                self.update(dt)
                 return
 
-            # Drive forward with small angular corrections
-            self.v = np.clip(self.k_linear * distance, 0, self.max_linear_vel)
-            # Small heading corrections while driving
+            speed_factor = min(1.0, distance / 2.0)
+            self.v = np.clip(
+                self.k_linear * distance * speed_factor,
+                0,
+                self.max_linear_vel
+            )
+
             self.omega = np.clip(
                 self.k_angular * 0.5 * angle_error,
                 -self.max_angular_vel * 0.3,
                 self.max_angular_vel * 0.3,
             )
 
-        # Update state
         self.update(dt)
 
     def set_wheel_velocities(self, v_left: float, v_right: float):
-        """
-        Set velocities from differential drive wheel speeds.
-        Converts to unicycle model (v, omega).
-
-        v = (v_right + v_left) / 2
-        omega = (v_right - v_left) / wheel_base
-        """
+        """Set velocities from differential drive wheel speeds."""
         self.v = (v_right + v_left) / 2.0
         self.omega = (v_right - v_left) / self.wheel_base
-
-        # Clamp to limits
         self.v = np.clip(self.v, -self.max_linear_vel, self.max_linear_vel)
         self.omega = np.clip(self.omega, -self.max_angular_vel, self.max_angular_vel)
 
     def get_wheel_velocities(self) -> tuple[float, float]:
-        """
-        Get differential drive wheel speeds from unicycle model.
-
-        v_left = v - omega * wheel_base / 2
-        v_right = v + omega * wheel_base / 2
-        """
+        """Get differential drive wheel speeds from unicycle model."""
         v_left = self.v - self.omega * self.wheel_base / 2.0
         v_right = self.v + self.omega * self.wheel_base / 2.0
         return v_left, v_right
 
     def get_footprint_cells(self) -> list[tuple[int, int]]:
-        """
-        Get list of (row, col) cells occupied by the robot's 3x3 footprint.
-        Robot center is at (self.x, self.y).
-        """
+        """Get list of (row, col) cells occupied by the robot's 3x3 footprint."""
         cells = []
         cx, cy = int(round(self.x)), int(round(self.y))
-        offset = self.size // 2  # 1 for 3x3
+        offset = self.size // 2
 
         for dr in range(-offset, offset + 1):
             for dc in range(-offset, offset + 1):
@@ -205,8 +307,15 @@ class Firebot:
         return cells
 
     def is_moving(self) -> bool:
-        """Check if robot is currently moving."""
-        return self.state != "idle" or abs(self.v) > 0.01 or abs(self.omega) > 0.01
+        """Check if robot is currently moving (velocity-based)."""
+        return abs(self.v) > 0.01 or abs(self.omega) > 0.01
+
+    def stop(self):
+        """Immediately stop the robot and clear target."""
+        self.v = 0.0
+        self.omega = 0.0
+        self.state = "idle"
+        self.target = None
 
     def _sample_fireline(self):
         """Record front position and heading for fireline if moved or rotated enough."""
@@ -216,24 +325,18 @@ class Firebot:
         front = self.front_position
 
         if self._last_fireline_pos is None or self._last_fireline_theta is None:
-            # First sample
             self.fireline_path.append((front[0], front[1], self.theta))
             self._last_fireline_pos = front
             self._last_fireline_theta = self.theta
             return
 
-        # Check distance from last sample
         dx = front[0] - self._last_fireline_pos[0]
         dy = front[1] - self._last_fireline_pos[1]
         dist = math.sqrt(dx * dx + dy * dy)
 
-        # Check angle change from last sample
         angle_diff = abs(self._normalize_angle(self.theta - self._last_fireline_theta))
 
-        if (
-            dist >= self.fireline_sample_dist
-            or angle_diff >= self.fireline_sample_angle
-        ):
+        if dist >= self.fireline_sample_dist or angle_diff >= self.fireline_sample_angle:
             self.fireline_path.append((front[0], front[1], self.theta))
             self._last_fireline_pos = front
             self._last_fireline_theta = self.theta
@@ -251,7 +354,7 @@ class Firebot:
     @property
     def front_position(self) -> tuple[float, float]:
         """Get position of the front edge center (1.5 cells ahead of center)."""
-        front_offset = self.size / 2.0  # 1.5 cells for 3x3 robot
+        front_offset = self.size / 2.0
         front_x = self.x + front_offset * math.cos(self.theta)
         front_y = self.y + front_offset * math.sin(self.theta)
         return (front_x, front_y)

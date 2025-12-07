@@ -2,8 +2,10 @@
 Tree sprite source: https://github.com/jube/slowtree
 """
 
-import math
 import hashlib
+import math
+
+import numpy as np
 import pygame
 
 CELL_BG_COLOR = (255, 255, 255)
@@ -56,6 +58,8 @@ class World:
 
         self.show_weights = False
         self.show_forbidden_zone = False
+        self.show_arrows = False
+        self.show_fireline_grid = False
         self.hud_font = pygame.font.SysFont(None, max(12, self.cell_size - 6))
         self.hud_rect = pygame.Rect(
             0, self.field_rect.bottom + self.margin, self.window_width, self.hud_height
@@ -169,9 +173,9 @@ class World:
                     )
         self.screen.blit(fire_overlay, self.field_rect.topleft)
 
-    def render_trees(self, tree_grid, firebot=None):
+    def render_trees(self, tree_grid):
+        """Render tree cell overlays."""
         rows, cols = tree_grid.shape
-        # colored overlay
         tree_overlay = pygame.Surface(
             (self.field_rect.width, self.field_rect.height), pygame.SRCALPHA
         )
@@ -180,9 +184,6 @@ class World:
             y = r * self.cell_size
             for c in range(cols):
                 if tree_grid[r, c]:
-                    # Skip if outside sensor radius (when firebot is provided)
-                    if firebot is not None and not self.is_cell_visible(r, c, firebot):
-                        continue
                     x = c * self.cell_size
                     pygame.draw.rect(
                         tree_overlay,
@@ -191,7 +192,8 @@ class World:
                     )
         self.screen.blit(tree_overlay, self.field_rect.topleft)
 
-    def render_tree_sprites(self, tree_grid, rng, firebot=None):
+    def render_tree_sprites(self, tree_grid, rng):
+        """Render tree sprites."""
         sprites = [
             pygame.image.load("assets/tree1.png").convert_alpha(),
             pygame.image.load("assets/tree2.png").convert_alpha(),
@@ -200,7 +202,6 @@ class World:
         ]
 
         sprite_px = 3 * self.cell_size
-
         scaled = [
             pygame.transform.smoothscale(s.convert_alpha(), (sprite_px, sprite_px))
             for s in sprites
@@ -209,23 +210,17 @@ class World:
         tree_sprite_overlay = pygame.Surface(self.field_rect.size, pygame.SRCALPHA)
 
         rows, cols = tree_grid.shape
-
         for row in range(rows):
             y = row * self.cell_size
             for col in range(cols):
                 if not tree_grid[row, col]:
                     continue
-                # Skip if outside sensor radius (when firebot is provided)
-                if firebot is not None and not self.is_cell_visible(row, col, firebot):
-                    continue
                 x = col * self.cell_size
 
-                # Deterministic index from (seed,row,col)
                 key = f"{row},{col}".encode()
-                digest = hashlib.blake2b(key, digest_size=8).digest()  # 64-bit
+                digest = hashlib.blake2b(key, digest_size=8).digest()
                 idx = int.from_bytes(digest, "little") % len(scaled)
 
-                # Center 3x3 sprite on the cell (offset by 1 cell up/left)
                 dest = (x - self.cell_size, y - self.cell_size)
                 tree_sprite_overlay.blit(scaled[idx], dest)
 
@@ -415,13 +410,25 @@ class World:
         # Weights checkbox
         x = 10
         self.toggle_rect, next_x = self._draw_checkbox(
-            x, y, box, self.show_weights, f"Weights {'ON' if self.show_weights else 'OFF'}"
+            x, y, box, self.show_weights, "Weights"
+        )
+
+        # Arrows checkbox
+        x = next_x + 15
+        self.arrows_toggle_rect, next_x = self._draw_checkbox(
+            x, y, box, self.show_arrows, "Arrows"
         )
 
         # Forbidden Zone checkbox
-        x = next_x + 20
-        self.forbidden_zone_toggle_rect, _ = self._draw_checkbox(
-            x, y, box, self.show_forbidden_zone, f"Forbidden Zone {'ON' if self.show_forbidden_zone else 'OFF'}"
+        x = next_x + 15
+        self.forbidden_zone_toggle_rect, next_x = self._draw_checkbox(
+            x, y, box, self.show_forbidden_zone, "Forbidden"
+        )
+
+        # Fireline Grid checkbox
+        x = next_x + 15
+        self.fireline_grid_toggle_rect, _ = self._draw_checkbox(
+            x, y, box, self.show_fireline_grid, "Fireline"
         )
 
     def handle_event(self, e):
@@ -568,3 +575,95 @@ class World:
             int(radius_px),
             width,
         )
+
+    def render_corridor(self, weight_grid, low_threshold=1.5):
+        """Highlight the low-cost corridor in green."""
+        overlay = pygame.Surface(self.field_rect.size, pygame.SRCALPHA)
+        cell = self.cell_size
+
+        for r in range(self.rows):
+            y = r * cell
+            for c in range(self.cols):
+                w = weight_grid[r, c]
+                if np.isfinite(w) and w <= low_threshold:
+                    x = c * cell
+                    pygame.draw.rect(
+                        overlay,
+                        (0, 200, 0, 60),  # Green, semi-transparent
+                        pygame.Rect(x, y, cell, cell),
+                    )
+
+        self.screen.blit(overlay, self.field_rect.topleft)
+
+    def render_gradient_arrows(self, cost_grid, spacing: int = 1):
+        """Draw arrows showing the gradient direction (downhill flow)."""
+        arrow_color = (0, 0, 200)
+
+        for row in range(spacing, self.rows - spacing, spacing):
+            for col in range(spacing, self.cols - spacing, spacing):
+                center_cost = cost_grid[row, col]
+                if not np.isfinite(center_cost):
+                    continue
+
+                # Compute gradient
+                left = cost_grid[row, col - 1] if np.isfinite(cost_grid[row, col - 1]) else center_cost + 10
+                right = cost_grid[row, col + 1] if np.isfinite(cost_grid[row, col + 1]) else center_cost + 10
+                up = cost_grid[row - 1, col] if np.isfinite(cost_grid[row - 1, col]) else center_cost + 10
+                down = cost_grid[row + 1, col] if np.isfinite(cost_grid[row + 1, col]) else center_cost + 10
+
+                # Gradient points downhill (toward lower cost)
+                grad_x = -(right - left) / 2.0
+                grad_y = -(down - up) / 2.0
+
+                mag = math.sqrt(grad_x ** 2 + grad_y ** 2)
+                if mag < 0.01:
+                    continue
+
+                # Normalize and scale for display
+                grad_x /= mag
+                grad_y /= mag
+                arrow_len = self.cell_size * 1.5
+
+                # Screen coordinates (as integers)
+                start_x = int(self.field_rect.left + col * self.cell_size + self.cell_size // 2)
+                start_y = int(self.field_rect.top + row * self.cell_size + self.cell_size // 2)
+                end_x = int(start_x + grad_x * arrow_len)
+                end_y = int(start_y + grad_y * arrow_len)
+
+                # Arrow line
+                pygame.draw.line(self.screen, arrow_color, (start_x, start_y), (end_x, end_y), 2)
+
+                # Arrowhead
+                angle = math.atan2(grad_y, grad_x)
+                head_len = 5
+                pygame.draw.line(
+                    self.screen, arrow_color,
+                    (end_x, end_y),
+                    (int(end_x - head_len * math.cos(angle - 0.5)), int(end_y - head_len * math.sin(angle - 0.5))),
+                    2
+                )
+                pygame.draw.line(
+                    self.screen, arrow_color,
+                    (end_x, end_y),
+                    (int(end_x - head_len * math.cos(angle + 0.5)), int(end_y - head_len * math.sin(angle + 0.5))),
+                    2
+                )
+
+    def render_path(self, path: list[tuple[int, int]], color=(0, 100, 255), width=3):
+        """Draw a path as a connected line."""
+        if len(path) < 2:
+            return
+
+        # Convert cell coordinates to screen coordinates
+        points = []
+        for row, col in path:
+            x = self.field_rect.left + col * self.cell_size + self.cell_size // 2
+            y = self.field_rect.top + row * self.cell_size + self.cell_size // 2
+            points.append((x, y))
+
+        pygame.draw.lines(self.screen, color, False, points, width)
+
+        # Draw start and end markers
+        if points:
+            pygame.draw.circle(self.screen, (0, 200, 0), points[0], 6)  # Start: green
+            pygame.draw.circle(self.screen, (200, 0, 0), points[-1], 6)  # Goal: red
