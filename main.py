@@ -4,14 +4,13 @@
 # + Sequential Encirclement (simplified)
 
 import math
-from typing import Optional
 
 import numpy as np
 import pygame
 
-from exploration import ExplorationMap
 from d_star_lite import DStarLite
 from encirclement import EncirclementPlanner, EncirclementState
+from exploration import ExplorationMap
 from fire_bitmap import load_fire_bitmap
 from fire_spread import FireSpread
 from firebot import Firebot
@@ -160,8 +159,12 @@ pygame.init()
 pygame.display.set_caption("Firebots - D* Lite + Encirclement")
 world = World(ROWS, COLS, CELL_SIZE)
 
-# Load fire bitmap (scale=0.5 makes fire half the size, centered)
-fire_surface, fire_grid = load_fire_bitmap("fire2.png", world.cols, world.rows, scale=0.75)
+# Load fire bitmap - 72x36 cells centered on the field
+FIRE_COLS = 72
+FIRE_ROWS = 36
+fire_surface, fire_grid, fire_bounds = load_fire_bitmap(
+    "fire2.png", world.cols, world.rows, fire_cols=FIRE_COLS, fire_rows=FIRE_ROWS
+)
 
 # Generate obstacles
 tree_grid = place_trees(world.cols, world.rows, count=TREE_COUNT, rng=rng)
@@ -406,6 +409,7 @@ while running:
                     print("\n=== Starting Manual Verification ===")
                     verification_mode = True
                     verification_start_fire_count = fire_grid.sum()
+                    world.show_fog_of_war = False
                 elif verification_mode:
                     print("Verification cancelled")
                     verification_mode = False
@@ -486,6 +490,7 @@ while running:
             # Start verification mode
             verification_mode = True
             verification_start_fire_count = fire_grid.sum()
+            world.show_fog_of_war = False
 
         elif encirclement.is_failed():
             print("\n=== ENCIRCLEMENT FAILED ===")
@@ -715,7 +720,7 @@ while running:
 
     # === Rendering ===
     world.clear()
-    world.fire_bitmap_overlay(fire_surface)
+    world.fire_bitmap_overlay(fire_surface, fire_bounds)
     world.render_grid()
     world.render_fire_cells(fire_grid)  # Show actual fire (user can see it)
     world.render_corridor(weight_grid)
@@ -759,7 +764,8 @@ while running:
             waypoints, states, encirclement.get_current_waypoint_index()
         )
 
-    world.render_fog_of_war(firebot)
+    if world.show_fog_of_war:
+        world.render_fog_of_war(firebot)
 
     if world.show_weights:
         world.render_weight_heatmap(weight_grid)

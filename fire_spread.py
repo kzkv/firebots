@@ -48,22 +48,19 @@ class FireSpread:
         return True
 
     def _find_spread_candidates(self) -> list[tuple[int, int]]:
-        """Find all cells that could be ignited (adjacent to fire, not fire, not fireline)."""
+        """Find all cells that could be ignited (4-connected neighbors only, no diagonals)."""
         candidates = []
         fire_positions = np.argwhere(self.fire_grid)
 
+        # 4-connected neighbors only (no diagonals) to prevent leaking through gaps
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
         for fire_row, fire_col in fire_positions:
-            for dr in [-1, 0, 1]:
-                for dc in [-1, 0, 1]:
-                    if dr == 0 and dc == 0:
-                        continue
-                    nr, nc = fire_row + dr, fire_col + dc
-                    if 0 <= nr < self.rows and 0 <= nc < self.cols:
-                        if (
-                            not self.fire_grid[nr, nc]
-                            and not self.fireline_grid[nr, nc]
-                        ):
-                            candidates.append((nr, nc))
+            for dr, dc in directions:
+                nr, nc = fire_row + dr, fire_col + dc
+                if 0 <= nr < self.rows and 0 <= nc < self.cols:
+                    if not self.fire_grid[nr, nc] and not self.fireline_grid[nr, nc]:
+                        candidates.append((nr, nc))
 
         return candidates
 

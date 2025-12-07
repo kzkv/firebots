@@ -57,7 +57,8 @@ class World:
         self.show_forbidden_zone = False
         self.show_arrows = False
         self.show_fireline_grid = False
-        self.show_waypoints = True  # NEW: Toggle for waypoint visibility
+        self.show_waypoints = True
+        self.show_fog_of_war = True
         self.hud_font = pygame.font.SysFont(None, max(12, self.cell_size - 6))
         self.hud_rect = pygame.Rect(
             0, self.field_rect.bottom + self.margin, self.window_width, self.hud_height
@@ -137,13 +138,34 @@ class World:
         )
         pygame.draw.rect(self.screen, HUD_BG_COLOR, hud_rect)
 
-    def fire_bitmap_overlay(self, fire_bitmap):
-        if fire_bitmap.get_size() != (self.field_rect.width, self.field_rect.height):
+    def fire_bitmap_overlay(self, fire_bitmap, fire_bounds=None):
+        """
+        Render fire bitmap overlay.
+
+        Args:
+            fire_bitmap: The pygame surface with fire image
+            fire_bounds: Optional (col_offset, row_offset, fire_cols, fire_rows)
+                        If None, scales to full field
+        """
+        if fire_bounds is None:
+            # Legacy behavior: scale to full field
+            target_width = self.field_rect.width
+            target_height = self.field_rect.height
+            x = self.field_rect.left
+            y = self.field_rect.top
+        else:
+            col_offset, row_offset, fire_cols, fire_rows = fire_bounds
+            target_width = fire_cols * self.cell_size
+            target_height = fire_rows * self.cell_size
+            x = self.field_rect.left + col_offset * self.cell_size
+            y = self.field_rect.top + row_offset * self.cell_size
+
+        if fire_bitmap.get_size() != (target_width, target_height):
             fire_bitmap = pygame.transform.smoothscale(
-                fire_bitmap, (self.field_rect.width, self.field_rect.height)
+                fire_bitmap, (target_width, target_height)
             )
         fire_bitmap.set_alpha(FIRE_BITMAP_ALPHA)
-        self.screen.blit(fire_bitmap, self.field_rect.topleft)
+        self.screen.blit(fire_bitmap, (x, y))
 
     def render_fire_cells(self, fire_grid):
         fire_overlay = pygame.Surface(
