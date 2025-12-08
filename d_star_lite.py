@@ -1,11 +1,5 @@
-# D* Lite Path Planner with Subcell Resolution - OPTIMIZED
+# D* Lite Path Planner with Subcell Resolution
 # RBE 550, Firebots (course project)
-#
-# Key optimizations:
-# 1. Precompute passability grid at init (vectorized numpy)
-# 2. Precompute cost grid at planning resolution
-# 3. Minimize per-cell function calls in hot path
-# 4. Use numpy arrays for fast lookups
 
 import heapq
 import math

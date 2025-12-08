@@ -129,36 +129,6 @@ def build_fire_potential_field(
     return cost
 
 
-def build_fire_corridor_cost(
-    fire_grid: np.ndarray,
-    fire_distance: np.ndarray,
-    min_distance: float = 2.0,
-    corridor_width: float = 2.0,
-    falloff_rate: float = 1.0,
-) -> np.ndarray:
-    """
-    Build cost field for the corridor around fire. (Legacy function)
-
-    Creates a flat optimal band around fire (cost = 0) that forms a
-    contiguous ring the robot can follow to encircle the fire.
-    """
-    cost = np.zeros_like(fire_distance, dtype=np.float32)
-
-    corridor_outer = min_distance + corridor_width
-
-    # Too close = impassable
-    cost[fire_distance < min_distance] = np.inf
-
-    # In corridor = cost 0 (optimal ring for encircling)
-    # Already 0 from np.zeros
-
-    # Beyond corridor = increasing cost (pushes robot toward corridor)
-    beyond = fire_distance > corridor_outer
-    cost[beyond] = (fire_distance[beyond] - corridor_outer) * falloff_rate
-
-    return cost
-
-
 def build_tree_potential_field(
     tree_grid: np.ndarray,
     min_distance: float = 1.5,
@@ -203,49 +173,19 @@ def build_tree_potential_field(
     return cost
 
 
-def build_tree_cost(
-    tree_grid: np.ndarray,
-    min_distance: float = 0.0,
-    trunk_scale: float = 10.0,
-    trunk_tau: float = 0.5,
-    trunk_max_radius: int = 3,
-) -> np.ndarray:
-    """
-    Build cost field for tree avoidance. (Legacy function - use build_tree_potential_field)
-    """
-    return build_tree_potential_field(
-        tree_grid,
-        min_distance=min_distance,
-        repulsion_strength=trunk_scale,
-        repulsion_decay=trunk_tau,
-        max_radius=trunk_max_radius,
-    )
-
-
 def rebuild_weight_grid(
     fire_grid: np.ndarray,
     fire_distance: np.ndarray,
     known_trees: np.ndarray,
     base_cost: float = 1.0,
-    # Fire potential field params
     fire_min_distance: float = 2.0,
     fire_ideal_distance: float = 4.0,
     fire_inner_repulsion: float = 10.0,
     fire_outer_repulsion: float = 2.0,
-    # Legacy fire corridor params (for backwards compatibility)
-    fire_corridor_width: float = None,
-    fire_falloff_rate: float = None,
-    # Tree potential field params
     tree_min_distance: float = 1.5,
     tree_repulsion_strength: float = 20.0,
     tree_repulsion_decay: float = 2.0,
     tree_max_radius: int = 5,
-    # Legacy tree params (for backwards compatibility)
-    tree_trunk_scale: float = None,
-    tree_trunk_tau: float = None,
-    tree_trunk_max_radius: int = None,
-    # Use potential field or legacy
-    use_potential_field: bool = True,
 ) -> np.ndarray:
     """
     Build complete weight grid combining fire and tree potential fields.
@@ -255,69 +195,23 @@ def rebuild_weight_grid(
     """
     rows, cols = fire_grid.shape
 
-    # Start with base cost
     weight = np.full((rows, cols), base_cost, dtype=np.float32)
 
-    if use_potential_field:
-        # New potential field approach
-        fire_cost = build_fire_potential_field(
-            fire_distance,
-            ideal_distance=fire_ideal_distance,
-            min_distance=fire_min_distance,
-            inner_repulsion=fire_inner_repulsion,
-            outer_repulsion=fire_outer_repulsion,
-        )
+    fire_cost = build_fire_potential_field(
+        fire_distance,
+        ideal_distance=fire_ideal_distance,
+        min_distance=fire_min_distance,
+        inner_repulsion=fire_inner_repulsion,
+        outer_repulsion=fire_outer_repulsion,
+    )
 
-        tree_cost = build_tree_potential_field(
-            known_trees,
-            min_distance=tree_min_distance,
-            repulsion_strength=tree_repulsion_strength,
-            repulsion_decay=tree_repulsion_decay,
-            max_radius=tree_max_radius,
-        )
-
-        # Debug: show cost ranges
-        fire_finite = fire_cost[np.isfinite(fire_cost)]
-        tree_finite = tree_cost[np.isfinite(tree_cost)]
-        if len(fire_finite) > 0 and len(tree_finite) > 0:
-            print(
-                f"  Fire cost range: {fire_finite.min():.1f} - {fire_finite.max():.1f}"
-            )
-            print(
-                f"  Tree cost range: {tree_finite.min():.1f} - {tree_finite.max():.1f} (trees found: {known_trees.sum()})"
-            )
-    else:
-        # Legacy corridor approach
-        corridor_width = fire_corridor_width if fire_corridor_width is not None else 2.0
-        falloff = fire_falloff_rate if fire_falloff_rate is not None else 1.0
-
-        fire_cost = build_fire_corridor_cost(
-            fire_grid,
-            fire_distance,
-            min_distance=fire_min_distance,
-            corridor_width=corridor_width,
-            falloff_rate=falloff,
-        )
-
-        t_scale = (
-            tree_trunk_scale
-            if tree_trunk_scale is not None
-            else tree_repulsion_strength
-        )
-        t_tau = tree_trunk_tau if tree_trunk_tau is not None else tree_repulsion_decay
-        t_radius = (
-            tree_trunk_max_radius
-            if tree_trunk_max_radius is not None
-            else tree_max_radius
-        )
-
-        tree_cost = build_tree_cost(
-            known_trees,
-            min_distance=tree_min_distance,
-            trunk_scale=t_scale,
-            trunk_tau=t_tau,
-            trunk_max_radius=t_radius,
-        )
+    tree_cost = build_tree_potential_field(
+        known_trees,
+        min_distance=tree_min_distance,
+        repulsion_strength=tree_repulsion_strength,
+        repulsion_decay=tree_repulsion_decay,
+        max_radius=tree_max_radius,
+    )
 
     # Combine: if either is inf, result is inf
     inf_mask = ~np.isfinite(weight) | ~np.isfinite(fire_cost) | ~np.isfinite(tree_cost)

@@ -152,8 +152,6 @@ def build_weights(fire_grid, fire_distance, known_trees):
         tree_repulsion_strength=TREE_REPULSION_STRENGTH,
         tree_repulsion_decay=TREE_REPULSION_DECAY,
         tree_max_radius=TREE_MAX_RADIUS,
-        # Use new potential field approach
-        use_potential_field=True,
     )
 
 
@@ -588,7 +586,7 @@ while running:
     else:
         # Verification mode: spread fire rapidly to test containment
         # Spread multiple cells per frame for faster verification
-        cells_per_frame = 30  # Spread up to 10 cells per frame
+        cells_per_frame = 30
 
         for _ in range(cells_per_frame):
             # Try to spread fire

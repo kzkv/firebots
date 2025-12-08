@@ -215,20 +215,6 @@ class EncirclementPlanner:
             return True
         return False
 
-    def _find_contour_cells(
-        self,
-        fire_distance: np.ndarray,
-        ideal_distance: float,
-        tolerance: float = 0.5,
-    ) -> np.ndarray:
-        """Find cells at approximately the ideal distance from fire. (Legacy method)"""
-        mask = (
-            (fire_distance >= ideal_distance - tolerance)
-            & (fire_distance <= ideal_distance + tolerance)
-            & np.isfinite(fire_distance)
-        )
-        return np.argwhere(mask)
-
     def _is_robot_passable(self, row: int, col: int, weight_grid: np.ndarray) -> bool:
         """
         Check if the robot can be centered at this cell.
@@ -450,38 +436,6 @@ class EncirclementPlanner:
         going_clockwise = dist_to_next <= dist_to_prev
 
         return nearest_idx, going_clockwise
-
-    def _sample_waypoints(
-        self,
-        contour: list[tuple[float, float]],
-    ) -> list[tuple[float, float]]:
-        """Sample waypoints at regular intervals along the contour. (Legacy method)"""
-        if len(contour) < 2:
-            return list(contour)
-
-        waypoints = [contour[0]]
-        accumulated_dist = 0.0
-
-        for i in range(1, len(contour)):
-            dx = contour[i][0] - contour[i - 1][0]
-            dy = contour[i][1] - contour[i - 1][1]
-            segment_dist = math.sqrt(dx * dx + dy * dy)
-            accumulated_dist += segment_dist
-
-            if accumulated_dist >= self.waypoint_spacing:
-                waypoints.append(contour[i])
-                accumulated_dist = 0.0
-
-        # Always include the last point if it's not too close to the previous waypoint
-        if len(contour) > 0 and len(waypoints) > 0:
-            last = contour[-1]
-            prev = waypoints[-1]
-            dx = last[0] - prev[0]
-            dy = last[1] - prev[1]
-            if math.sqrt(dx * dx + dy * dy) > self.waypoint_spacing * 0.5:
-                waypoints.append(last)
-
-        return waypoints
 
     def _sample_waypoints_with_spacing(
         self,
