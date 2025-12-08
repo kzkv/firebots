@@ -165,7 +165,7 @@ world = World(ROWS, COLS, CELL_SIZE)
 FIRE_COLS = 72
 FIRE_ROWS = 36
 fire_surface, fire_grid, fire_bounds = load_fire_bitmap(
-    "fire2.png", world.cols, world.rows, fire_cols=FIRE_COLS, fire_rows=FIRE_ROWS
+    "fire1.png", world.cols, world.rows, fire_cols=FIRE_COLS, fire_rows=FIRE_ROWS
 )
 
 # Generate obstacles
