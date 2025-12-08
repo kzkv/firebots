@@ -96,7 +96,7 @@ if __name__ == "__main__":
     pygame.display.set_mode((1, 1), pygame.HIDDEN)
 
     try:
-        _, fire_grid = load_fire_bitmap("fire2.png", COLS, ROWS)
+        _, fire_grid, _ = load_fire_bitmap("fire2.png", COLS, ROWS)
     except FileNotFoundError:
         print("fire2.png not found, creating synthetic fire")
         fire_grid = np.zeros((ROWS, COLS), dtype=bool)
